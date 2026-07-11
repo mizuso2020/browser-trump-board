@@ -1,0 +1,17 @@
+[Unit]
+Description=Party Games Room API
+After=network.target
+
+[Service]
+Type=simple
+User=ec2-user
+WorkingDirectory=/home/ec2-user/party-games/api
+Environment=PARTY_GAMES_DATA=/home/ec2-user/party-games-data
+Environment=PARTY_GAMES_HOST=127.0.0.1
+Environment=PARTY_GAMES_PORT=8765
+ExecStart=/usr/bin/python3 /home/ec2-user/party-games/api/room_server.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target

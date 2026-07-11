@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="人狼の遊び方・ルール説明。5〜13人対応、その場モードとオンライン。">
+  <meta name="keywords" content="人狼 ルール,人狼 遊び方,人狼 無料,パーティーゲーム">
+  <link rel="canonical" href="http://54.65.228.227/games/guide.html">
+  <title>人狼の遊び方 | ブラウザで無料プレイ</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="header site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo">ブラウザ・トランプ＆ボード</a>
+      <nav class="site-nav">
+        <a href="index.html">トップ</a>
+        <a href="categories.html">カテゴリ</a>
+        <span class="site-nav-stat">
+          <a href="guide.html" class="is-current">遊び方</a>
+          <span id="sitePlayCount" class="site-play-count" aria-label="累計プレイ回数">…</span>
+        </span>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" id="guideApp">
+    <div class="loading-overlay">読み込み中…</div>
+  </main>
+
+  <footer class="site-footer">
+    <p>ブラウザ・トランプ＆ボード</p>
+    <p><a href="index.html#room" class="text-link">ルームを作って遊ぶ →</a></p>
+  </footer>
+
+  <script src="js/utils.js"></script>
+  <script src="js/stats-boot.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/game-registry.js"></script>
+  <script src="js/games/werewolf.js"></script>
+  <script src="js/games-catalog.js"></script>
+  <script>
+    (function () {
+      const app = document.getElementById("guideApp");
+      app.innerHTML = GamesCatalog.renderGuidePage();
+      GamesCatalog.bindGuideToggles(app);
+    })();
+  </script>
+</body>
+</html>

@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: http://54.65.228.227/games/sitemap.xml

@@ -1,0 +1,1 @@
+window.PARTY_GAMES_PLAY_COUNT = 200;

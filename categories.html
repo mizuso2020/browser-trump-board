@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="ボードゲーム・カードゲーム・協力ゲームなど、ジャンル別にブラウザで遊べるゲームを探せます。">
+  <link rel="canonical" href="http://54.65.228.227/games/categories.html">
+  <title>カテゴリ | ブラウザ・トランプ＆ボード</title>
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <header class="header site-header">
+    <div class="header-inner">
+      <a href="index.html" class="logo">ブラウザ・トランプ＆ボード</a>
+      <nav class="site-nav">
+        <a href="index.html">トップ</a>
+        <a href="categories.html" class="is-current">カテゴリ</a>
+        <span class="site-nav-stat">
+          <a href="guide.html">遊び方</a>
+          <span id="sitePlayCount" class="site-play-count" aria-label="累計プレイ回数">…</span>
+        </span>
+      </nav>
+    </div>
+  </header>
+
+  <main class="container" id="categoriesApp">
+    <div class="loading-overlay">読み込み中…</div>
+  </main>
+
+  <footer class="site-footer">
+    <p>ブラウザ・トランプ＆ボード</p>
+    <p><a href="index.html" class="text-link">ゲーム一覧へ</a> · <a href="guide.html" class="text-link">遊び方ガイド</a></p>
+  </footer>
+
+  <script src="js/utils.js"></script>
+  <script src="js/stats-boot.js"></script>
+  <script src="js/stats.js"></script>
+  <script src="js/game-registry.js"></script>
+  <script src="js/games-catalog.js"></script>
+  <script>
+    (function () {
+      document.getElementById("categoriesApp").innerHTML = GamesCatalog.renderCategoriesPage();
+      if (window.location.hash) {
+        var target = document.querySelector(window.location.hash);
+        if (target) {
+          setTimeout(function () {
+            target.scrollIntoView({ behavior: "smooth", block: "start" });
+          }, 80);
+        }
+      }
+    })();
+  </script>
+</body>
+</html>
