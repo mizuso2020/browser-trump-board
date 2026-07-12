@@ -10,6 +10,16 @@ const ItoGame = {
   INITIAL_LIFE: 3,
   MAX_STAGES: 5,
 
+  BASIC_CONFIG_ROWS: [
+    { label: "2人", min: 2, max: 2, life: 1, turns: 3, turnsLabel: "2〜3" },
+    { label: "3人", min: 3, max: 3, life: 1, turns: 3, turnsLabel: "3" },
+    { label: "4人", min: 4, max: 4, life: 2, turns: 4, turnsLabel: "3〜4" },
+    { label: "5人", min: 5, max: 5, life: 3, turns: 4, turnsLabel: "4" },
+    { label: "6人", min: 6, max: 6, life: 3, turns: 3, turnsLabel: "3" },
+    { label: "7人", min: 7, max: 7, life: 4, turns: 3, turnsLabel: "3" },
+    { label: "8人", min: 8, max: 8, life: 4, turns: 3, turnsLabel: "3" }
+  ],
+
   THEME_CATEGORIES: [
     {
       id: "normal",
@@ -98,6 +108,239 @@ const ItoGame = {
     return ctx.isHost || (ctx.room && ctx.room.mode === "local");
   },
 
+  getBasicConfig: function (playerCount) {
+    const count = Math.max(2, playerCount || 2);
+    const row = this.BASIC_CONFIG_ROWS.find(function (r) {
+      return count >= r.min && count <= r.max;
+    });
+    return row
+      ? { life: row.life, turns: row.turns, turnsLabel: row.turnsLabel || String(row.turns) }
+      : { life: 3, turns: 5, turnsLabel: "5" };
+  },
+
+  defaultLobbySetup: function (playerCount) {
+    const basic = this.getBasicConfig(playerCount);
+    return {
+      setupMode: "basic",
+      customLife: basic.life,
+      customTurns: basic.turns
+    };
+  },
+
+  clampCustomLife: function (value) {
+    return Math.max(1, Math.min(9, value));
+  },
+
+  clampCustomTurns: function (value) {
+    return Math.max(1, Math.min(10, value));
+  },
+
+  loadPlaySetupFromSession: function () {
+    try {
+      const raw = sessionStorage.getItem("partyGames_itoSetup");
+      if (!raw) return null;
+      const saved = JSON.parse(raw);
+      return {
+        setupMode: saved.setupMode === "custom" ? "custom" : "basic",
+        customLife: this.clampCustomLife(saved.customLife || 3),
+        customTurns: this.clampCustomTurns(saved.customTurns || 5)
+      };
+    } catch (e) {
+      return null;
+    }
+  },
+
+  ensureLobbySetup: function (room) {
+    if (!room.lobbyIto) {
+      room.lobbyIto = this.loadPlaySetupFromSession() || this.defaultLobbySetup(room.players.length);
+    }
+    return room.lobbyIto;
+  },
+
+  syncLobbySetupPlayerCount: function (room) {
+    const lobby = this.ensureLobbySetup(room);
+    const basic = this.getBasicConfig(room.players.length);
+    if (lobby.setupMode !== "custom") {
+      lobby.customLife = basic.life;
+      lobby.customTurns = basic.turns;
+    }
+    return room;
+  },
+
+  resolveSetupValues: function (room) {
+    const lobby = room.lobbyIto;
+    const count = room.players.length;
+    if (lobby && lobby.setupMode === "custom") {
+      return {
+        setupMode: "custom",
+        life: this.clampCustomLife(lobby.customLife),
+        turns: this.clampCustomTurns(lobby.customTurns)
+      };
+    }
+    const basic = this.getBasicConfig(count);
+    return {
+      setupMode: "basic",
+      life: basic.life,
+      turns: basic.turns
+    };
+  },
+
+  renderBasicConfigTable: function (playerCount) {
+    const count = playerCount || 4;
+    let html = '<table class="ito-basic-table"><thead><tr>';
+    html += '<th>人数</th><th>❤️ ライフ</th><th>ターン</th></tr></thead><tbody>';
+    this.BASIC_CONFIG_ROWS.forEach(function (row) {
+      const active = count >= row.min && count <= row.max;
+      html += '<tr class="' + (active ? "is-active" : "") + '">';
+      html += '<td>' + escapeHtml(row.label) + '</td>';
+      html += '<td>' + row.life + '</td>';
+      html += '<td>' + escapeHtml(row.turnsLabel || String(row.turns)) + '</td>';
+      html += '</tr>';
+    });
+    html += '</tbody></table>';
+    return html;
+  },
+
+  renderLobbySetup: function (room, canManage) {
+    this.syncLobbySetupPlayerCount(room);
+    const lobby = this.ensureLobbySetup(room);
+    const count = room.players.length;
+    const basic = this.getBasicConfig(count);
+    const turnsText = basic.turnsLabel || String(basic.turns);
+    const html = ['<section class="card setup-panel ito-setup-panel">'];
+    html.push('<h2>ゲーム設定</h2>');
+    html.push('<p class="section-lead">基本構成か、ライフとターンを自分で決めます</p>');
+
+    html.push('<div class="setup-options">');
+    [
+      { id: "basic", name: "基本構成", hint: "❤️ " + basic.life + " / ターン " + turnsText },
+      { id: "custom", name: "カスタム", hint: "ライフとターンを自由に設定" }
+    ].forEach(function (option) {
+      const selected = lobby.setupMode === option.id;
+      if (canManage) {
+        html.push(
+          '<button type="button" class="setup-option' + (selected ? " is-selected" : "") + '" data-action="ito-lobby-select-setup" data-setup="' + option.id + '">' +
+            '<span class="setup-option-name">' + escapeHtml(option.name) + '</span>' +
+            '<span class="setup-option-hint">' + escapeHtml(option.hint) + '</span>' +
+          '</button>'
+        );
+      } else if (selected) {
+        html.push(
+          '<div class="setup-option setup-option--readonly is-selected">' +
+            '<span class="setup-option-name">' + escapeHtml(option.name) + '</span>' +
+            '<span class="setup-option-hint">' + escapeHtml(option.hint) + '</span>' +
+          '</div>'
+        );
+      }
+    });
+    html.push('</div>');
+
+    html.push('<h3 class="setup-subtitle">基本構成の目安</h3>');
+    html.push(this.renderBasicConfigTable(count));
+
+    if (lobby.setupMode === "custom") {
+      html.push('<h3 class="setup-subtitle" style="margin-top:1rem">カスタム設定</h3>');
+      html.push('<div class="ito-custom-stats">');
+      html.push('<div class="ito-custom-stat"><span class="ito-custom-label">❤️ ライフ</span><div class="player-count-row">');
+      if (canManage) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-action="ito-lobby-custom" data-stat="life" data-delta="-1" ' + (lobby.customLife <= 1 ? "disabled" : "") + '>−</button>');
+      }
+      html.push('<span class="player-count-value">' + lobby.customLife + '</span>');
+      if (canManage) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-action="ito-lobby-custom" data-stat="life" data-delta="1" ' + (lobby.customLife >= 9 ? "disabled" : "") + '>＋</button>');
+      }
+      html.push('</div></div>');
+      html.push('<div class="ito-custom-stat"><span class="ito-custom-label">ターン</span><div class="player-count-row">');
+      if (canManage) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-action="ito-lobby-custom" data-stat="turns" data-delta="-1" ' + (lobby.customTurns <= 1 ? "disabled" : "") + '>−</button>');
+      }
+      html.push('<span class="player-count-value">' + lobby.customTurns + '</span>');
+      if (canManage) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-action="ito-lobby-custom" data-stat="turns" data-delta="1" ' + (lobby.customTurns >= 10 ? "disabled" : "") + '>＋</button>');
+      }
+      html.push('</div></div></div>');
+    }
+
+    if (!canManage) {
+      html.push('<p class="note">ホストが設定を選びます</p>');
+    }
+    html.push('</section>');
+    return html.join("");
+  },
+
+  renderPlaySetup: function (playerCount, setup, canEdit) {
+    const lobby = setup || this.defaultLobbySetup(playerCount);
+    const basic = this.getBasicConfig(playerCount);
+    const turnsText = basic.turnsLabel || String(basic.turns);
+    const html = ['<div class="ito-play-setup-inner">'];
+    html.push('<p class="note">基本構成か、ライフとターンを自分で決めます</p>');
+
+    html.push('<div class="setup-options">');
+    [
+      { id: "basic", name: "基本構成", hint: "❤️ " + basic.life + " / ターン " + turnsText },
+      { id: "custom", name: "カスタム", hint: "ライフとターンを自由に設定" }
+    ].forEach(function (option) {
+      const selected = lobby.setupMode === option.id;
+      if (canEdit) {
+        html.push(
+          '<button type="button" class="setup-option' + (selected ? " is-selected" : "") + '" data-ito-setup="' + option.id + '">' +
+            '<span class="setup-option-name">' + escapeHtml(option.name) + '</span>' +
+            '<span class="setup-option-hint">' + escapeHtml(option.hint) + '</span>' +
+          '</button>'
+        );
+      }
+    });
+    html.push('</div>');
+
+    if (lobby.setupMode === "basic") {
+      html.push('<p class="ito-basic-summary">この人数（' + playerCount + '人）→ ❤️ <strong>' + basic.life + '</strong> / ターン <strong>' + escapeHtml(turnsText) + '</strong></p>');
+    } else {
+      html.push('<div class="ito-custom-stats" style="margin-top:0.75rem">');
+      html.push('<div class="ito-custom-stat"><span class="ito-custom-label">❤️ ライフ</span><div class="player-count-row">');
+      if (canEdit) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-ito-life-delta="-1" ' + (lobby.customLife <= 1 ? "disabled" : "") + '>−</button>');
+      }
+      html.push('<span class="player-count-value" data-ito-life-value>' + lobby.customLife + '</span>');
+      if (canEdit) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-ito-life-delta="1" ' + (lobby.customLife >= 9 ? "disabled" : "") + '>＋</button>');
+      }
+      html.push('</div></div>');
+      html.push('<div class="ito-custom-stat"><span class="ito-custom-label">ターン数</span><div class="player-count-row">');
+      if (canEdit) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-ito-turns-delta="-1" ' + (lobby.customTurns <= 1 ? "disabled" : "") + '>−</button>');
+      }
+      html.push('<span class="player-count-value" data-ito-turns-value>' + lobby.customTurns + '</span>');
+      if (canEdit) {
+        html.push('<button type="button" class="btn btn-secondary player-count-btn" data-ito-turns-delta="1" ' + (lobby.customTurns >= 10 ? "disabled" : "") + '>＋</button>');
+      }
+      html.push('</div></div></div>');
+    }
+    html.push('</div>');
+    return html.join("");
+  },
+
+  selectLobbySetup: function (room, setupId) {
+    const lobby = this.ensureLobbySetup(room);
+    lobby.setupMode = setupId === "custom" ? "custom" : "basic";
+    if (lobby.setupMode === "basic") {
+      const basic = this.getBasicConfig(room.players.length);
+      lobby.customLife = basic.life;
+      lobby.customTurns = basic.turns;
+    }
+    return room;
+  },
+
+  adjustLobbyCustom: function (room, stat, delta) {
+    const lobby = this.ensureLobbySetup(room);
+    lobby.setupMode = "custom";
+    if (stat === "life") {
+      lobby.customLife = this.clampCustomLife(lobby.customLife + delta);
+    } else {
+      lobby.customTurns = this.clampCustomTurns(lobby.customTurns + delta);
+    }
+    return room;
+  },
+
   getCategory: function (categoryId) {
     return this.THEME_CATEGORIES.find(function (c) { return c.id === categoryId; })
       || this.THEME_CATEGORIES.find(function (c) { return c.id === "omakase"; });
@@ -177,11 +420,13 @@ const ItoGame = {
   },
 
   init: function (room) {
+    const values = this.resolveSetupValues(room);
     room.gameState = {
       stage: 1,
-      maxStages: this.MAX_STAGES,
-      life: this.INITIAL_LIFE,
-      maxLife: this.INITIAL_LIFE,
+      maxStages: values.turns,
+      life: values.life,
+      maxLife: values.life,
+      setupMode: values.setupMode,
       theme: "",
       themeCategoryId: "omakase",
       hands: {},
@@ -192,7 +437,7 @@ const ItoGame = {
       lastPlayResult: null
     };
     this.dealStage(room);
-    room.phase = "ito_reveal";
+    room.phase = "ito_theme";
     return room;
   },
 
@@ -204,7 +449,8 @@ const ItoGame = {
   applyRandomTheme: function (room) {
     const gs = room.gameState;
     gs.theme = this.pickRandomTheme("omakase");
-    room.phase = "ito_play";
+    gs.revealIndex = 0;
+    room.phase = "ito_reveal";
     return room;
   },
 
@@ -212,7 +458,8 @@ const ItoGame = {
     const text = (theme || "").trim();
     if (!text) return room;
     room.gameState.theme = text;
-    room.phase = "ito_play";
+    room.gameState.revealIndex = 0;
+    room.phase = "ito_reveal";
     return room;
   },
 
@@ -220,7 +467,7 @@ const ItoGame = {
     const gs = room.gameState;
     gs.revealIndex += 1;
     if (gs.revealIndex >= room.players.length) {
-      room.phase = "ito_theme";
+      room.phase = "ito_play";
     }
     return room;
   },
@@ -317,11 +564,18 @@ const ItoGame = {
     gs.stage += 1;
     gs.theme = "";
     this.dealStage(room);
-    room.phase = "ito_reveal";
+    room.phase = "ito_theme";
     return room;
   },
 
   restart: function (room) {
+    if (!room.lobbyIto && room.gameState) {
+      room.lobbyIto = {
+        setupMode: room.gameState.setupMode || "basic",
+        customLife: room.gameState.maxLife,
+        customTurns: room.gameState.maxStages
+      };
+    }
     return this.init(room);
   },
 
@@ -336,7 +590,7 @@ const ItoGame = {
 
   renderHud: function (gs) {
     let html = '<div class="ito-hud">';
-    html += '<span class="ito-hud-item">ステージ <strong>' + gs.stage + '</strong></span>';
+    html += '<span class="ito-hud-item">ターン <strong>' + gs.stage + '</strong> / ' + gs.maxStages + '</span>';
     html += '<span class="ito-hud-item">手札 <strong>' + gs.stage + '枚</strong></span>';
     html += '<span class="ito-hud-item">ライフ ' + this.renderLife(gs.life, gs.maxLife) + '</span>';
     html += '</div>';
@@ -350,6 +604,37 @@ const ItoGame = {
     }).join("");
   },
 
+  renderHandCardsBack: function (count) {
+    if (!count) return '<span class="ito-no-cards">なし</span>';
+    let html = '<div class="ito-hand-backs">';
+    for (let i = 0; i < count; i++) {
+      html += '<span class="ito-card-back" aria-hidden="true"></span>';
+    }
+    html += '</div>';
+    return html;
+  },
+
+  renderFlipHandCards: function (cards) {
+    if (!cards || !cards.length) return '<span class="ito-no-cards">なし</span>';
+    let html = '<div class="ito-flip-hand">';
+    cards.forEach(function (n, i) {
+      html += '<div class="ito-flip-card" style="--flip-delay:' + (i * 90) + 'ms">';
+      html += '<div class="ito-flip-inner">';
+      html += '<div class="ito-flip-front" aria-hidden="true"><span class="ito-flip-q">?</span></div>';
+      html += '<div class="ito-flip-back"><span class="ito-flip-num">' + n + '</span></div>';
+      html += '</div></div>';
+    });
+    html += '</div>';
+    return html;
+  },
+
+  renderFieldCard: function (card, revealNumber) {
+    if (revealNumber) {
+      return '<span class="ito-field-card ito-field-card--open"><strong>' + escapeHtml(card.name) + '</strong> <span class="ito-reveal-num">' + card.number + '</span></span>';
+    }
+    return '<span class="ito-field-card ito-field-card--back" title="' + escapeHtml(card.name) + '"><span class="ito-card-back-name">' + escapeHtml(card.name) + '</span></span>';
+  },
+
   render: function (ctx) {
     const room = ctx.room;
     const gs = room.gameState;
@@ -360,19 +645,21 @@ const ItoGame = {
     if (room.phase === "ito_reveal") {
       const current = room.players[gs.revealIndex];
       html.push(this.renderHud(gs));
-      html.push('<div class="phase-banner"><h2>手札確認 ' + (gs.revealIndex + 1) + ' / ' + room.players.length + '</h2>');
-      html.push('<p>ステージ ' + gs.stage + ' — 各プレイヤーに <strong>' + gs.stage + '枚</strong> 配布済み</p></div>');
+      html.push('<div class="phase-banner"><h2>' + escapeHtml(current ? current.name : "") + ' — 数字をめくる</h2>');
+      html.push('<p>' + (gs.revealIndex + 1) + '人目 / 全' + room.players.length + '人　ターン ' + gs.stage + '（各' + gs.stage + '枚）</p></div>');
       html.push('<section class="card ito-reveal-card">');
       if (current) {
-        html.push('<h2>' + escapeHtml(current.name) + ' さんの番</h2>');
-        html.push('<p class="note">周りに見えないようにしてから数字を確認してください。</p>');
-        html.push('<button type="button" class="btn btn-secondary" data-action="ito-reveal-number">数字を見る</button>');
-        html.push('<div id="revealArea" class="hidden secret-panel ito-secret-panel">');
-        html.push('<p class="ito-secret-label">あなたの数字（小→大）</p>');
-        html.push('<div class="ito-hand-preview">' + this.renderHandCards(gs.hands[current.id]) + '</div>');
-        html.push('<p class="note">お題に沿った言葉だけで表現。数字は言わない！</p>');
+        html.push('<p class="note">スマホを <strong>' + escapeHtml(current.name) + '</strong> に渡して、周りに見えないように数字を確認してください。</p>');
+        html.push('<div id="itoRevealFlipZone" class="ito-reveal-flip-zone">');
+        html.push(this.renderFlipHandCards(gs.hands[current.id]));
+        html.push('</div>');
+        html.push('<button type="button" class="btn btn-secondary ito-reveal-btn" data-action="ito-reveal-number">数字をめくる</button>');
+        html.push('<div id="revealArea" class="hidden secret-panel ito-secret-panel ito-reveal-meta">');
+        html.push('<p class="ito-secret-label">' + escapeHtml(current.name) + ' の数字（小→大）</p>');
+        html.push('<p class="note">お題「' + escapeHtml(gs.theme) + '」に沿った言葉だけで表現。数字は言わない！</p>');
         html.push('<button type="button" class="btn btn-primary" data-action="ito-hide-number">隠す</button></div>');
-        html.push('<button type="button" class="btn btn-primary ito-next-reveal-btn" data-action="ito-next-reveal">次の人へ渡す</button>');
+        html.push('<button type="button" class="btn btn-primary ito-next-reveal-btn" data-action="ito-next-reveal">' +
+          (gs.revealIndex < room.players.length - 1 ? "次の人へ渡す" : "カードを出すへ進む") + '</button>');
       }
       html.push('</section>');
       return html.join("");
@@ -382,19 +669,13 @@ const ItoGame = {
       html.push(this.renderHud(gs));
       html.push('<div class="phase-banner"><h2>お題を決める</h2>');
       html.push('<p>1＝弱い / 100＝強い。お題に沿った言葉だけで数字の大小を伝え合います。</p></div>');
-      html.push('<section class="card"><h2>クモノイトの流れ</h2><ul class="clue-list ito-rules">');
-      html.push('<li>話し合いながら「今いちばん小さい」と思った人がカードを出す</li>');
-      html.push('<li>出した数字が残り全員の手札より小さければ <strong>成功</strong></li>');
-      html.push('<li>失敗すると <strong>ライフ -1</strong> ＋ より小さいカードが公開・除外</li>');
-      html.push('<li>全員の手札を出し切ったらステージクリア（全' + gs.maxStages + 'ステージで勝利）</li>');
-      html.push('</ul></section>');
       if (manage) {
         html.push('<section class="card ito-theme-card"><h2>お題を選ぶ</h2>');
         html.push('<button type="button" class="btn btn-primary ito-random-theme-btn" data-action="ito-random-theme">🎲 ランダムでお題を決める</button>');
         html.push('<p class="ito-theme-or">または</p>');
         html.push('<label class="ito-custom-label">自由入力</label>');
         html.push('<input type="text" id="customTheme" placeholder="例：怖いもの、キュンとする仕草" maxlength="30">');
-        html.push('<button type="button" class="btn btn-secondary" data-action="ito-custom-theme">このお題で始める</button>');
+        html.push('<button type="button" class="btn btn-secondary" data-action="ito-custom-theme">このお題で進む</button>');
         html.push('</section>');
       }
       return html.join("");
@@ -402,7 +683,7 @@ const ItoGame = {
 
     if (room.phase === "ito_play" || room.phase === "ito_play_feedback") {
       html.push(this.renderHud(gs));
-      html.push('<div class="phase-banner"><h2>プレイ中</h2>');
+      html.push('<div class="phase-banner"><h2>カードを出す</h2>');
       html.push('<p class="ito-theme-display">お題：「<strong>' + escapeHtml(gs.theme) + '</strong>」</p></div>');
 
       html.push('<section class="card"><h2>場（出されたカード）</h2>');
@@ -410,12 +691,15 @@ const ItoGame = {
         html.push('<p class="note">まだカードは出ていません</p>');
       } else {
         html.push('<div class="ito-field-line">');
+        const showNumbers = room.phase === "ito_play_feedback";
         gs.field.forEach(function (card, i) {
-          html += '<span class="ito-field-card"><strong>' + escapeHtml(card.name) + '</strong> <span class="ito-reveal-num">' + card.number + '</span>';
+          html += this.renderFieldCard(card, showNumbers);
           if (i < gs.field.length - 1) html += '<span class="ito-field-arrow">→</span>';
-          html += '</span>';
-        });
+        }, this);
         html += '</div>';
+        if (!showNumbers) {
+          html.push('<p class="note ito-field-note">裏向きのカードに名前が書かれています</p>');
+        }
       }
       html.push('</section>');
 
@@ -460,19 +744,20 @@ const ItoGame = {
       }
 
       html.push('<section class="card"><h2>カードを出す</h2>');
-      html.push('<p class="note ito-play-hint">話し合って「今いちばん小さい」と思った人のボタンを押してください（最小のカードが出ます）</p>');
+      html.push('<p class="note ito-play-hint">話し合って「今いちばん小さい」と思った人を選び、裏向きでカードを出します</p>');
       html.push('<div class="ito-play-grid">');
       room.players.forEach(function (p) {
         const n = this.handCount(gs, p.id);
         const disabled = n === 0 ? " disabled" : "";
         html.push('<button type="button" class="btn btn-secondary ito-play-btn' + disabled + '" data-action="ito-play-card" data-player="' + p.id + '"' + disabled + '>');
-        html.push(escapeHtml(p.name) + ' が出す');
+        html.push('<span class="ito-play-card-back" aria-hidden="true"></span>');
+        html.push('<span class="ito-play-card-label">' + escapeHtml(p.name) + ' が出す</span>');
         if (n > 0) html.push('<span class="ito-play-sub">残り ' + n + ' 枚</span>');
         html.push('</button>');
       }, this);
       html.push('</div>');
 
-      html.push('<details class="ito-peek-details"><summary>手札を再確認する</summary><div class="ito-peek-grid">');
+      html.push('<details class="ito-peek-details"><summary>数字を再確認する</summary><div class="ito-peek-grid">');
       room.players.forEach(function (p) {
         if (!this.handCount(gs, p.id)) return;
         html.push('<button type="button" class="btn btn-ghost ito-peek-btn" data-action="ito-peek-player" data-player="' + p.id + '">' + escapeHtml(p.name) + ' の数字</button>');
@@ -487,26 +772,26 @@ const ItoGame = {
     if (room.phase === "ito_stage_clear") {
       html.push(this.renderHud(gs));
       html.push('<section class="card ito-round-result is-success">');
-      html.push('<h2 class="ito-result-title">🎉 ステージ ' + gs.stage + ' クリア！</h2>');
+      html.push('<h2 class="ito-result-title">🎉 ターン ' + gs.stage + ' クリア！</h2>');
       html.push('<p>全員の手札を出し切りました。お題「' + escapeHtml(gs.theme) + '」</p>');
       if (gs.stage >= gs.maxStages) {
-        html.push('<p>全ステージ達成です！</p>');
+        html.push('<p>全ターン達成です！</p>');
       } else {
-        html.push('<p>次はステージ ' + (gs.stage + 1) + '（手札 ' + (gs.stage + 1) + ' 枚）です。</p>');
+        html.push('<p>次はターン ' + (gs.stage + 1) + '（手札 ' + (gs.stage + 1) + ' 枚）です。</p>');
       }
       if (manage && gs.stage < gs.maxStages) {
-        html.push('<button type="button" class="btn btn-primary" data-action="ito-next-stage">次のステージへ</button>');
+        html.push('<button type="button" class="btn btn-primary" data-action="ito-next-stage">次のターンへ</button>');
       }
       html.push('</section>');
       return html.join("");
     }
 
     if (room.phase === "ito_victory") {
-      html.push('<div class="phase-banner ito-victory-banner"><h2>🎉 全ステージクリア！</h2>');
+      html.push('<div class="phase-banner ito-victory-banner"><h2>🎉 全ターンクリア！</h2>');
       html.push('<p>全員の価値観が見事に一致しました</p></div>');
       html.push('<section class="card">');
       html.push('<p>最終ライフ ' + this.renderLife(gs.life, gs.maxLife) + '</p>');
-      html.push('<p>ステージ ' + gs.maxStages + ' までクリア</p></section>');
+      html.push('<p>ターン ' + gs.maxStages + ' までクリア</p></section>');
       if (manage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ito-restart">もう一度遊ぶ</button>');
         html.push('<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>');
@@ -518,7 +803,7 @@ const ItoGame = {
       html.push('<div class="phase-banner ito-gameover-banner"><h2>ゲームオーバー</h2>');
       html.push('<p>ライフが0になりました…</p></div>');
       html.push('<section class="card">');
-      html.push('<p>ステージ <strong>' + gs.stage + '</strong> で終了</p>');
+      html.push('<p>ターン <strong>' + gs.stage + '</strong> で終了</p>');
       html.push('<p>お題：「' + escapeHtml(gs.theme || "—") + '」</p></section>');
       if (manage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ito-restart">もう一度遊ぶ</button>');

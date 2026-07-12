@@ -52,6 +52,29 @@ const VanishingTttGame = {
     return mark === this.CIRCLE ? room.players[0] : room.players[1];
   },
 
+  isRemoteRoom: function (room) {
+    return room.mode === "room" || room.mode === "online";
+  },
+
+  isMyTurn: function (ctx) {
+    if (!this.isRemoteRoom(ctx.room)) return true;
+    const gs = ctx.room.gameState;
+    if (!gs || gs.finished) return false;
+    const player = this.getPlayerForMark(ctx.room, gs.turn);
+    return !!(ctx.me && player && player.id === ctx.me.id);
+  },
+
+  renderTurnNote: function (ctx, current, markLabel) {
+    if (!current) return "";
+    if (!this.isRemoteRoom(ctx.room)) {
+      return '<p class="vttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + markLabel + "）</strong> の番です。スマホを渡して置いてください。</p>";
+    }
+    if (this.isMyTurn(ctx)) {
+      return '<p class="vttt-turn-note"><strong>あなたの番</strong>（' + markLabel + "）です。マスをタップしてください。</p>";
+    }
+    return '<p class="vttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + markLabel + "）</strong> の番です。相手の操作を待っています…</p>";
+  },
+
   markLabel: function (mark) {
     return mark === this.CIRCLE ? "〇" : "×";
   },
@@ -174,7 +197,7 @@ const VanishingTttGame = {
     html += "</div>";
 
     if (!gs.finished && current) {
-      html += '<p class="vttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + this.markLabel(gs.turn) + "）</strong> の番です。スマホを渡して置いてください。</p>";
+      html += this.renderTurnNote(ctx, current, this.markLabel(gs.turn));
     }
 
     html += '<div class="vttt-meta">';
@@ -192,7 +215,7 @@ const VanishingTttGame = {
       if (cell === this.CROSS) classes += " has-cross";
 
       html += '<button type="button" class="' + classes + '" data-action="vttt-play" data-index="' + i + '"';
-      if (gs.finished || cell !== this.EMPTY) html += " disabled";
+      if (gs.finished || cell !== this.EMPTY || !this.isMyTurn(ctx)) html += " disabled";
       html += ' aria-label="' + (pos.row + 1) + "行" + (pos.col + 1) + "列\">";
       if (cell !== this.EMPTY) {
         html += this.renderMark(cell, i, lastMove, winningLine);

@@ -65,6 +65,18 @@ const MatryoshkaTttGame = {
     return owner === this.PLAYER1 ? room.players[0] : room.players[1];
   },
 
+  isRemoteRoom: function (room) {
+    return room.mode === "room" || room.mode === "online";
+  },
+
+  isMyTurn: function (ctx) {
+    if (!this.isRemoteRoom(ctx.room)) return true;
+    const gs = ctx.room.gameState;
+    if (!gs || gs.finished) return false;
+    const player = this.getPlayerForOwner(ctx.room, gs.turn);
+    return !!(ctx.me && player && player.id === ctx.me.id);
+  },
+
   ownerLabel: function (owner) {
     return owner === this.PLAYER1 ? "赤" : "青";
   },
@@ -278,7 +290,7 @@ const MatryoshkaTttGame = {
     if (isWin) classes += " is-win";
 
     let html = '<button type="button" class="' + classes + '" data-action="mttt-cell" data-row="' + row + '" data-col="' + col + '"';
-    if (gs.finished) html += " disabled";
+    if (gs.finished || !this.isMyTurn(ctx)) html += " disabled";
     html += ' aria-label="' + (row + 1) + "行" + (col + 1) + "列\">";
 
     if (top) {
@@ -292,6 +304,7 @@ const MatryoshkaTttGame = {
     const player = this.getPlayerForOwner(ctx.room, owner);
     const hand = gs.hands[owner];
     const isTurn = gs.turn === owner && !gs.finished;
+    const canInteract = !this.isRemoteRoom(ctx.room) || (this.isMyTurn(ctx) && ctx.me && player && player.id === ctx.me.id);
     const sel = gs.selected;
     let html = '<div class="mttt-hand mttt-hand--' + (owner === this.PLAYER1 ? "p1" : "p2") + (isTurn ? " is-active" : "") + '">';
     html += "<p class=\"mttt-hand-label\">" + escapeHtml(player ? player.name : this.ownerLabel(owner)) + " の手持ち</p>";
@@ -300,7 +313,7 @@ const MatryoshkaTttGame = {
     [1, 2, 3].forEach(function (size) {
       const count = hand[size];
       const selected = sel && sel.type === "hand" && sel.owner === owner && sel.size === size;
-      const disabled = !isTurn || count <= 0 || gs.finished;
+      const disabled = !isTurn || !canInteract || count <= 0 || gs.finished;
       let cls = "mttt-hand-btn";
       if (selected) cls += " is-selected";
       if (count <= 0) cls += " is-empty";
@@ -343,7 +356,13 @@ const MatryoshkaTttGame = {
     html += "</div>";
 
     if (!gs.finished && current) {
-      html += '<p class="mttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + this.ownerLabel(gs.turn) + "）</strong> の番です。";
+      if (!this.isRemoteRoom(ctx.room)) {
+        html += '<p class="mttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + this.ownerLabel(gs.turn) + "）</strong> の番です。";
+      } else if (this.isMyTurn(ctx)) {
+        html += '<p class="mttt-turn-note"><strong>あなたの番</strong>（' + this.ownerLabel(gs.turn) + "）です。";
+      } else {
+        html += '<p class="mttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + this.ownerLabel(gs.turn) + "）</strong> の番です。相手の操作を待っています…";
+      }
       if (gs.selected) {
         html += " 置き先のマスをタップしてください。";
       } else {

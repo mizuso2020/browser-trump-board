@@ -4,10 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <meta name="robots" content="noindex">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>遊び方を選ぶ | ブラウザ・トランプ＆ボード</title>
-  <link rel="stylesheet" href="css/style.css">
+  <link rel="stylesheet" href="css/style.css?v=20260712-room2">
 </head>
 <body>
+
+  <script src="js/file-protocol-guard.js"></script>
 
   <header class="header site-header">
     <div class="header-inner">
@@ -58,7 +61,7 @@
         <div class="room-panel play-step-panel">
           <div id="localSetup">
             <div id="wordwolfPlaySetup" class="wordwolf-play-setup hidden"></div>
-            <h3 class="setup-title">人数と名前</h3>
+            <h3 class="setup-title">人数・名前・ライフ/ターン</h3>
             <p class="note" id="setupRangeHint"></p>
             <div class="player-count-row">
               <span class="player-count-label">人数</span>
@@ -67,6 +70,7 @@
               <button type="button" class="btn btn-secondary player-count-btn" id="setupCountUp">＋</button>
               <span class="player-count-hint">人</span>
             </div>
+            <div id="itoPlaySetup" class="ito-play-setup hidden"></div>
             <div id="setupPlayerSlots" class="player-name-slots"></div>
           </div>
           <div class="btn-row" style="margin-top: 0.75rem;">
@@ -79,9 +83,10 @@
         <button type="button" class="play-back-btn" id="backToModeFromRoom">← 遊び方を選び直す</button>
         <div class="play-step-header">
           <h2>📱 各自のスマホで遊ぶ</h2>
-          <p class="play-step-lead">ルームコードで参加し、それぞれのスマホで遊びます。</p>
+          <p class="play-step-lead" id="playRoomStepLead">ルームコードで参加し、それぞれのスマホで遊びます。</p>
         </div>
-        <section class="room-panel play-step-panel">
+        <p class="room-invite-badge hidden" id="roomInviteBadge"></p>
+        <section class="room-panel play-step-panel" id="roomCreatePanel">
           <h3 class="setup-title">ルームを作る</h3>
           <p class="note" id="roomModeNote">ルームを作り、コードを共有してください。参加者は各自のスマホから参加します。</p>
           <p class="note hidden" id="firebaseNoteRoom">Firebase の設定が必要です（README 参照）。</p>
@@ -91,12 +96,15 @@
           </div>
           <button class="btn btn-primary" id="createRoomBtnRoom" style="width:100%;margin-top:0.75rem">ルームを作る</button>
         </section>
-        <section class="join-panel play-step-panel">
-          <h3 class="setup-title">ルームに参加</h3>
+        <section class="join-panel play-step-panel" id="roomJoinPanel">
+          <h3 class="setup-title" id="roomJoinTitle">ルームに参加</h3>
+          <p class="note hidden" id="roomJoinInviteNote">名前を入れてルームに入ると、ホストの準備が終わるまで待機します。</p>
           <label for="joinPlayerNameRoom">あなたの名前</label>
           <input type="text" id="joinPlayerNameRoom" placeholder="プレイヤー1" maxlength="12" autocomplete="nickname">
-          <label for="roomCodeRoom">ルームコード（4桁）</label>
-          <input type="text" id="roomCodeRoom" placeholder="11AA" maxlength="4" style="text-transform: uppercase; letter-spacing: 0.2em; text-align: center; font-size: 1.4rem;">
+          <div id="roomCodeJoinRow">
+            <label for="roomCodeRoom">ルームコード（4桁）</label>
+            <input type="text" id="roomCodeRoom" placeholder="11AA" maxlength="4" style="text-transform: uppercase; letter-spacing: 0.2em; text-align: center; font-size: 1.4rem;">
+          </div>
           <button class="btn btn-secondary" style="width:100%;margin-top:0.65rem" id="joinRoomBtnRoom">参加する</button>
         </section>
       </section>
@@ -134,15 +142,17 @@
   </footer>
 
   <script src="js/firebase-config.js"></script>
-  <script src="js/utils.js"></script>
+  <script src="js/utils.js?v=20260712-room8"></script>
   <script src="js/stats-boot.js"></script>
   <script src="js/stats.js"></script>
-  <script src="js/game-registry.js"></script>
+  <script src="js/game-registry.js?v=20260713-ttt-room"></script>
   <script src="js/games/werewolf.js"></script>
   <script src="js/games/wordwolf.js"></script>
+  <script src="js/games/ito.js?v=20260712-ito8"></script>
+  <script src="js/ito-play-setup-boot.js?v=20260712-ito8"></script>
   <script src="js/room-store.js"></script>
   <script src="js/secrets.js"></script>
   <script src="js/sync.js"></script>
-  <script src="js/play.js"></script>
+  <script src="js/play.js?v=20260712-room8"></script>
 </body>
 </html>

@@ -39,14 +39,58 @@ let selectedMode = "local";
 let setupPlayerCount = 4;
 let wordwolfThemeId = "all";
 let wordwolfWolfCount = 1;
+let itoSetupMode = "basic";
+let itoCustomLife = 3;
+let itoCustomTurns = 5;
 
 const wordwolfPlaySetupEl = document.getElementById("wordwolfPlaySetup");
+const itoPlaySetupEl = document.getElementById("itoPlaySetup");
 
 const savedName = loadPlayerName();
 if (playerNameInput) playerNameInput.value = savedName;
 if (playerNameInputOnline) playerNameInputOnline.value = savedName;
 if (joinPlayerNameInputRoom) joinPlayerNameInputRoom.value = savedName;
 if (joinPlayerNameInputOnline) joinPlayerNameInputOnline.value = savedName;
+
+function getInviteJoinCode() {
+  return (getQueryParam("code") || getQueryParam("join") || "").toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 4);
+}
+
+function isRoomInviteJoin() {
+  const code = getInviteJoinCode();
+  if (code.length !== 4) return false;
+  const mode = getQueryParam("mode");
+  return mode === "room" || !mode;
+}
+
+function setupRoomInviteJoinUI(joinCode) {
+  const createPanel = document.getElementById("roomCreatePanel");
+  const codeRow = document.getElementById("roomCodeJoinRow");
+  const inviteBadge = document.getElementById("roomInviteBadge");
+  const inviteNote = document.getElementById("roomJoinInviteNote");
+  const backBtn = document.getElementById("backToModeFromRoom");
+  const stepLead = document.getElementById("playRoomStepLead");
+  const joinTitle = document.getElementById("roomJoinTitle");
+  const stepHeader = document.querySelector("#playRoomStep .play-step-header h2");
+
+  if (createPanel) createPanel.classList.add("hidden");
+  if (codeRow) codeRow.classList.add("hidden");
+  if (inviteBadge) {
+    inviteBadge.textContent = "ルームコード " + joinCode;
+    inviteBadge.classList.remove("hidden");
+  }
+  if (inviteNote) inviteNote.classList.remove("hidden");
+  if (backBtn) backBtn.classList.add("hidden");
+  if (stepHeader) stepHeader.textContent = "ルームに参加";
+  if (stepLead) stepLead.textContent = "名前を入れてルームに入ってください。";
+  if (joinTitle) joinTitle.textContent = "名前を入力";
+  if (joinRoomBtnRoom) {
+    joinRoomBtnRoom.textContent = "ルームに入る";
+    joinRoomBtnRoom.classList.remove("btn-secondary");
+    joinRoomBtnRoom.classList.add("btn-primary");
+  }
+  if (roomCodeInputRoom) roomCodeInputRoom.value = joinCode;
+}
 
 function isMultiDeviceMode(mode) {
   return mode === "room" || mode === "online";
@@ -327,8 +371,97 @@ function bindWordwolfPlaySetupPanel() {
   });
 }
 
+function loadItoPlaySetup() {
+  try {
+    const raw = sessionStorage.getItem("partyGames_itoSetup");
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (saved.setupMode) itoSetupMode = saved.setupMode === "custom" ? "custom" : "basic";
+    if (saved.customLife) itoCustomLife = saved.customLife;
+    if (saved.customTurns) itoCustomTurns = saved.customTurns;
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function saveItoPlaySetup() {
+  sessionStorage.setItem("partyGames_itoSetup", JSON.stringify({
+    setupMode: itoSetupMode,
+    customLife: itoCustomLife,
+    customTurns: itoCustomTurns
+  }));
+}
+
+function isItoGame() {
+  const meta = getActiveGameMeta();
+  return meta && meta.id === "ito";
+}
+
+function getItoPlaySetupState() {
+  const basic = ItoGame.getBasicConfig(setupPlayerCount);
+  if (itoSetupMode !== "custom") {
+    itoCustomLife = basic.life;
+    itoCustomTurns = basic.turns;
+  }
+  return {
+    setupMode: itoSetupMode,
+    customLife: ItoGame.clampCustomLife(itoCustomLife),
+    customTurns: ItoGame.clampCustomTurns(itoCustomTurns)
+  };
+}
+
+function renderItoPlaySetupPanel() {
+  if (!itoPlaySetupEl) return;
+  if (!isItoGame()) {
+    itoPlaySetupEl.classList.add("hidden");
+    itoPlaySetupEl.innerHTML = "";
+    return;
+  }
+
+  const setup = getItoPlaySetupState();
+  itoPlaySetupEl.classList.remove("hidden");
+  itoPlaySetupEl.innerHTML = ItoGame.renderPlaySetup(setupPlayerCount, setup, true);
+  bindItoPlaySetupPanel();
+}
+
+function bindItoPlaySetupPanel() {
+  if (!itoPlaySetupEl || itoPlaySetupEl.classList.contains("hidden")) return;
+
+  itoPlaySetupEl.querySelectorAll("[data-ito-setup]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      itoSetupMode = btn.dataset.itoSetup === "custom" ? "custom" : "basic";
+      if (itoSetupMode === "basic") {
+        const basic = ItoGame.getBasicConfig(setupPlayerCount);
+        itoCustomLife = basic.life;
+        itoCustomTurns = basic.turns;
+      }
+      saveItoPlaySetup();
+      renderItoPlaySetupPanel();
+    });
+  });
+
+  itoPlaySetupEl.querySelectorAll("[data-ito-life-delta]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      itoSetupMode = "custom";
+      itoCustomLife = ItoGame.clampCustomLife(itoCustomLife + parseInt(btn.dataset.itoLifeDelta, 10));
+      saveItoPlaySetup();
+      renderItoPlaySetupPanel();
+    });
+  });
+
+  itoPlaySetupEl.querySelectorAll("[data-ito-turns-delta]").forEach(function (btn) {
+    btn.addEventListener("click", function () {
+      itoSetupMode = "custom";
+      itoCustomTurns = ItoGame.clampCustomTurns(itoCustomTurns + parseInt(btn.dataset.itoTurnsDelta, 10));
+      saveItoPlaySetup();
+      renderItoPlaySetupPanel();
+    });
+  });
+}
+
 function initLocalSetup() {
   loadWordwolfPlaySetup();
+  loadItoPlaySetup();
   const range = getSetupPlayerRange();
   setupPlayerCount = range.defaultCount;
   if (setupRangeHint) setupRangeHint.textContent = range.hint;
@@ -367,6 +500,10 @@ function renderLocalSetup() {
   }
   setupPlayerSlots.innerHTML = html;
   renderWordwolfPlaySetupPanel();
+  renderItoPlaySetupPanel();
+  if (typeof window.partyGamesItoBoot === "function") {
+    window.partyGamesItoBoot();
+  }
 }
 
 function collectSetupPlayers() {
@@ -441,8 +578,11 @@ function initPlayPage() {
       return;
     }
     goToModeSetup(modeParam);
-    if (joinCode && modeParam === "room" && roomCodeInputRoom) {
-      roomCodeInputRoom.value = joinCode;
+    if (joinCode && modeParam === "room") {
+      if (roomCodeInputRoom) roomCodeInputRoom.value = joinCode;
+      if (isRoomInviteJoin()) {
+        setupRoomInviteJoinUI(joinCode);
+      }
       if (joinPlayerNameInputRoom) joinPlayerNameInputRoom.focus();
     }
     if (joinCode && modeParam === "online" && roomCodeInputOnline) {
@@ -494,6 +634,9 @@ async function createRoom(mode, nameInput, btn) {
       if (isWordwolfGame()) {
         saveWordwolfPlaySetup();
       }
+      if (isItoGame()) {
+        saveItoPlaySetup();
+      }
       const code = generateRoomCode();
       const room = {
         code: code,
@@ -519,17 +662,20 @@ async function createRoom(mode, nameInput, btn) {
     }
 
     const code = generateRoomCode();
+    const pendingGame = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame");
     const room = {
       code: code,
       phase: "lobby",
       game: null,
       gameState: null,
       mode: mode,
+      pendingGame: pendingGame || null,
       _creatorName: name,
       createdAt: Date.now()
     };
     await Sync.createOnline(room);
-    window.location.href = "room.html?code=" + code + "&mode=" + encodeURIComponent(mode) + pendingGameQuery();
+    rememberRoomSession(code, mode, Sync.uid);
+    window.location.href = buildRoomUrl(code, mode, { playerId: Sync.uid });
   } catch (err) {
     showToast(err.message || "ルーム作成に失敗しました");
     setLoading(btn, false, idleLabel);
@@ -556,10 +702,11 @@ async function joinRoom(mode, nameInput, codeInput, btn) {
   try {
     await Sync.init(mode);
     await Sync.joinOnline(code, name);
-    window.location.href = "room.html?code=" + code + "&mode=" + encodeURIComponent(mode) + pendingGameQuery();
+    rememberRoomSession(code, mode, Sync.uid);
+    window.location.href = buildRoomUrl(code, mode, { playerId: Sync.uid });
   } catch (err) {
     showToast(err.message || "参加に失敗しました");
-    setLoading(btn, false, "参加する");
+    setLoading(btn, false, isRoomInviteJoin() ? "ルームに入る" : "参加する");
   }
 }
 
@@ -596,6 +743,14 @@ createRoomBtnOnline.addEventListener("click", function () {
 joinRoomBtnRoom.addEventListener("click", function () {
   joinRoom("room", joinPlayerNameInputRoom, roomCodeInputRoom, joinRoomBtnRoom);
 });
+
+if (joinPlayerNameInputRoom) {
+  joinPlayerNameInputRoom.addEventListener("keydown", function (e) {
+    if (e.key === "Enter" && playRoomStep && !playRoomStep.classList.contains("hidden")) {
+      joinRoom("room", joinPlayerNameInputRoom, roomCodeInputRoom, joinRoomBtnRoom);
+    }
+  });
+}
 
 joinRoomBtnOnline.addEventListener("click", function () {
   joinRoom("online", joinPlayerNameInputOnline, roomCodeInputOnline, joinRoomBtnOnline);

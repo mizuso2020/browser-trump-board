@@ -74,7 +74,27 @@ const Sync = {
 
   apiFetch: async function (url, options) {
 
-    const res = await fetch(this.apiBase() + url, options || {});
+    const opts = Object.assign({ cache: "no-store" }, options || {});
+
+    if ((!opts.method || opts.method === "GET") && url.indexOf("/room/") === 0) {
+
+      const sep = url.indexOf("?") >= 0 ? "&" : "?";
+
+      url = url + sep + "_=" + Date.now();
+
+    }
+
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+
+    if (controller) {
+
+      opts.signal = controller.signal;
+
+      setTimeout(function () { controller.abort(); }, 12000);
+
+    }
+
+    const res = await fetch(this.apiBase() + url, opts);
 
     let data = {};
 
@@ -98,9 +118,21 @@ const Sync = {
 
       }
 
+      if (res.status === 409 && msg === "stale") {
+
+        throw new Error("保存が古くなりました。画面を更新してください");
+
+      }
+
       if (res.status === 409 && msg === "started") {
 
         throw new Error("すでにゲームが始まっています");
+
+      }
+
+      if (res.status === 409 && msg === "full") {
+
+        throw new Error("ルームが満員です");
 
       }
 
@@ -268,7 +300,7 @@ const Sync = {
 
   joinServer: async function (code, name) {
 
-    return this.apiFetch("/room/" + code + "/join", {
+    return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/join", {
 
       method: "POST",
 
@@ -282,9 +314,39 @@ const Sync = {
 
 
 
+  resolvePlayerServer: async function (code, name, playerId) {
+
+    return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/resolve-player", {
+
+      method: "POST",
+
+      headers: { "Content-Type": "application/json" },
+
+      body: JSON.stringify({ playerId: playerId || this.uid, name: name || "" })
+
+    });
+
+  },
+
+
+
+  resolvePlayer: async function (code, name, playerId) {
+
+    if (this.shouldUseServerApi()) {
+
+      return this.resolvePlayerServer(code, name, playerId);
+
+    }
+
+    return null;
+
+  },
+
+
+
   loadServer: async function (code) {
 
-    return this.apiFetch("/room/" + code);
+    return this.apiFetch("/room/" + String(code || "").toUpperCase());
 
   },
 
@@ -292,7 +354,7 @@ const Sync = {
 
   saveServer: async function (room) {
 
-    await this.apiFetch("/room/" + room.code, {
+    await this.apiFetch("/room/" + String(room.code || "").toUpperCase(), {
 
       method: "PUT",
 
@@ -408,29 +470,33 @@ const Sync = {
 
   subscribeServer: function (code, callback) {
 
-    let last = null;
+    const roomId = String(code || "").toUpperCase();
 
-    return setInterval(async function () {
+    const poll = async function () {
 
       try {
 
-        const latest = await Sync.apiFetch("/room/" + code);
-
-        const json = JSON.stringify(latest);
-
-        if (json === last) return;
-
-        last = json;
+        const latest = await Sync.apiFetch("/room/" + roomId);
 
         callback(latest);
 
       } catch (e) {
 
-        /* ignore transient errors while polling */
+        callback({ __syncFailed: true, error: String(e.message || e) });
 
       }
 
-    }, 1000);
+    };
+
+    poll();
+
+    const timer = setInterval(poll, 400);
+
+    timer.forcePoll = poll;
+
+    timer.resetPollCache = function () {};
+
+    return timer;
 
   },
 
@@ -740,7 +806,8 @@ const Sync = {
 
     payload.mode = room.mode || "online";
 
-    payload.updatedAt = Date.now();
+    const prevAt = Number(room.updatedAt);
+    payload.updatedAt = Math.max(Date.now(), (isFinite(prevAt) ? prevAt : 0) + 1);
 
     return payload;
 

@@ -12,13 +12,13 @@
 
   <meta name="keywords" content="人狼 無料,人狼 ブラウザ,パーティーゲーム,ボードゲーム,ブラウザゲーム,オンライン 無料">
 
-  <link rel="canonical" href="http://54.65.228.227/games/">
+  <link rel="canonical" href="http://browser-trump-board.com/games/">
 
   <meta property="og:title" content="ブラウザ・トランプ＆ボード">
 
   <meta property="og:description" content="ボードゲーム・トランプ・パーティーゲームをブラウザで無料プレイ。">
 
-  <meta property="og:url" content="http://54.65.228.227/games/">
+  <meta property="og:url" content="http://browser-trump-board.com/games/">
 
   <meta property="og:type" content="website">
 
@@ -38,7 +38,7 @@
 
     "name": "ブラウザ・トランプ＆ボード",
 
-    "url": "http://54.65.228.227/games/",
+    "url": "http://browser-trump-board.com/games/",
 
     "description": "ボードゲーム・トランプ・パーティーゲームをブラウザで無料プレイできるサイト。",
 
@@ -58,7 +58,18 @@
 
 <body>
 
+  <div id="fileProtocolWarning" hidden style="max-width:520px;margin:2rem auto;padding:1.5rem;font-family:sans-serif;line-height:1.7;background:#1e293b;color:#e2e8f0;border-radius:12px;border:2px solid #f59e0b;">
+    <h1 style="margin:0 0 1rem;font-size:1.25rem;color:#fbbf24;">index.html を直接開いています</h1>
+    <p>ZIPの中から開いたり、<code style="color:#fcd34d;">file://</code> で開くと <strong>CSSやゲームが読み込めず</strong>、真っ白や文字だけの画面になります。</p>
+    <ol style="padding-left:1.25rem;">
+      <li>ZIPを<strong>「すべて展開」</strong>してフォルダにする</li>
+      <li>展開したフォルダで <strong>アプリを開く.bat</strong> をダブルクリック</li>
+      <li>ブラウザで <code style="color:#fcd34d;">http://localhost:29500/</code> が開きます</li>
+    </ol>
+    <p style="margin-bottom:0;color:#94a3b8;font-size:0.9rem;">※ index.html は直接押さないでください</p>
+  </div>
 
+  <div id="appRoot">
 
   <header class="header site-header">
 
@@ -98,7 +109,17 @@
 
   </footer>
 
+  </div>
 
+  <script>
+  (function () {
+    if (location.protocol !== "file:") return;
+    var warn = document.getElementById("fileProtocolWarning");
+    var root = document.getElementById("appRoot");
+    if (warn) warn.hidden = false;
+    if (root) root.hidden = true;
+  })();
+  </script>
 
   <script src="js/utils.js"></script>
 

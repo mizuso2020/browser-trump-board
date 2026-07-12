@@ -394,8 +394,9 @@ const WerewolfGame = {
 
   getWolvesWithRoles: function (room, roles) {
     const gs = room.gameState;
+    const roleMap = roles || {};
     return room.players.filter(function (p) {
-      return gs.alive.includes(p.id) && roles[p.id] === "wolf";
+      return gs.alive.includes(p.id) && roleMap[p.id] === "wolf";
     });
   },
 
@@ -429,7 +430,11 @@ const WerewolfGame = {
   },
 
   getRoles: function (ctx) {
-    return ctx.hostSecrets && ctx.hostSecrets.roles ? ctx.hostSecrets.roles : ctx.room.gameState.roles;
+    const gs = ctx.room.gameState;
+    if (gs && gs.revealedRoles) return gs.revealedRoles;
+    if (ctx.hostSecrets && ctx.hostSecrets.roles) return ctx.hostSecrets.roles;
+    if (gs && gs.roles) return gs.roles;
+    return {};
   },
 
   removePlayer: function (room, playerId, roles) {
@@ -442,26 +447,30 @@ const WerewolfGame = {
 
   checkWin: function (room, roles) {
     const gs = room.gameState;
+    const roleMap = roles || {};
     const alive = this.getAlivePlayers(room);
 
-    if (alive.length === 1 && roles[alive[0].id] === "fox") {
+    if (alive.length === 1 && roleMap[alive[0].id] === "fox") {
       gs.winner = "fox";
       room.phase = "wolf_end";
+      gs.revealedRoles = Object.assign({}, roleMap);
       return true;
     }
 
-    const wolves = alive.filter(function (p) { return roles[p.id] === "wolf"; });
-    const nonWolves = alive.filter(function (p) { return roles[p.id] !== "wolf"; });
+    const wolves = alive.filter(function (p) { return roleMap[p.id] === "wolf"; });
+    const nonWolves = alive.filter(function (p) { return roleMap[p.id] !== "wolf"; });
 
     if (wolves.length === 0) {
       gs.winner = "villagers";
       room.phase = "wolf_end";
+      gs.revealedRoles = Object.assign({}, roleMap);
       return true;
     }
 
     if (wolves.length === nonWolves.length) {
       gs.winner = "wolves";
       room.phase = "wolf_end";
+      gs.revealedRoles = Object.assign({}, roleMap);
       return true;
     }
 
@@ -469,13 +478,16 @@ const WerewolfGame = {
   },
 
   confirmRole: function (room, playerId) {
-    room.gameState.roleConfirmed[playerId] = true;
+    const gs = room.gameState;
+    if (!gs.roleConfirmed) gs.roleConfirmed = {};
+    gs.roleConfirmed[playerId] = true;
     return room;
   },
 
   allRolesConfirmed: function (room) {
+    const confirmed = (room.gameState && room.gameState.roleConfirmed) || {};
     return room.players.every(function (p) {
-      return room.gameState.roleConfirmed[p.id];
+      return confirmed[p.id];
     });
   },
 
@@ -485,7 +497,7 @@ const WerewolfGame = {
 
   NIGHT_ACTION_ROLES: ["wolf", "seer", "hunter"],
 
-  DISCUSSION_MS: 5 * 60 * 1000,
+  DISCUSSION_MS: 3 * 60 * 1000,
 
   FIRST_NIGHT_SACRIFICE_NAME: "村長",
 
@@ -853,11 +865,13 @@ const WerewolfGame = {
     const html = [];
 
     if (role === "wolf") {
-      const wolves = this.getWolvesWithRoles(ctx.room, roles).filter(function (w) {
-        return w.id !== playerId;
-      });
-      if (wolves.length) {
-        html.push('<p class="note">仲間：' + wolves.map(function (m) {
+      const mates = ctx.isOnline && ctx.secrets && ctx.secrets.wolfMates
+        ? ctx.getWolfMates()
+        : this.getWolvesWithRoles(ctx.room, roles).filter(function (w) {
+            return w.id !== playerId;
+          });
+      if (mates.length) {
+        html.push('<p class="note">仲間：' + mates.map(function (m) {
           return escapeHtml(m.name);
         }).join("、") + '</p>');
       }
@@ -1249,6 +1263,8 @@ const WerewolfGame = {
   normalizePhase: function (room) {
     const gs = room.gameState;
     if (!gs) return room;
+    if (!gs.roleConfirmed) gs.roleConfirmed = {};
+    if (!gs.alive) gs.alive = room.players.map(function (p) { return p.id; });
     if (room.phase === "wolf_day" && gs.votes && Object.keys(gs.votes).length > 0) {
       room.phase = "wolf_vote";
       gs.phase = "vote";
@@ -1353,9 +1369,23 @@ const WerewolfGame = {
     return room;
   },
 
+  getLobbySetupView: function (room) {
+    if (room.lobbyWerewolf) return room.lobbyWerewolf;
+    const count = room.players.length;
+    const basic = this.getSetupPresets(count)[0];
+    return {
+      selectedSetupId: "basic",
+      customRoles: this.defaultCustomRoleCounts(count),
+      setupPreviewHint: basic.hint,
+      setupPreviewName: "基本構成"
+    };
+  },
+
   renderLobbySetup: function (room, canManage) {
-    this.ensureLobbySetup(room);
-    const lobby = room.lobbyWerewolf;
+    if (canManage) {
+      this.ensureLobbySetup(room);
+    }
+    const lobby = canManage ? room.lobbyWerewolf : this.getLobbySetupView(room);
     const count = room.players.length;
     const basic = this.getSetupPresets(count)[0];
     const selectedId = lobby.selectedSetupId || "basic";
@@ -1564,7 +1594,8 @@ const WerewolfGame = {
       html.push('<section class="card secret-panel role-reveal-panel">');
       html.push(this.renderRoleFlipScene(ctx, me.id, { showButtonLabel: "自分の役職を見る" }));
 
-      if (!gs.roleConfirmed[me.id]) {
+      const confirmed = gs.roleConfirmed || {};
+      if (!confirmed[me.id]) {
         html.push('<button type="button" class="btn btn-success btn-block" style="margin-top:1rem" data-action="wolf-confirm-role">役職を確認した</button>');
       } else {
         html.push('<p class="note" style="margin-top:1rem">確認済み ✓</p>');
@@ -1784,11 +1815,11 @@ const WerewolfGame = {
     }
 
     if (room.phase === "wolf_day") {
-      html.push(this.renderPhaseBanner("昼 " + gs.day + " — 議論", room, gs, "みんなで議論してください（制限時間5分）"));
+      html.push(this.renderPhaseBanner("昼 " + gs.day + " — 議論", room, gs, "みんなで議論してください（制限時間3分）"));
 
       html.push('<section class="card discussion-panel">');
       html.push('<p class="discussion-timer-label">残り時間</p>');
-      html.push('<p class="discussion-timer" id="discussionTimer">5:00</p>');
+      html.push('<p class="discussion-timer" id="discussionTimer">3:00</p>');
       html.push('</section>');
 
       html.push('<section class="card"><h2>生存者</h2>' + this.renderAlivePlayerStrip(room, gs) + '</section>');

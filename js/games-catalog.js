@@ -12,6 +12,19 @@ const GamesCatalog = {
     return '<span class="play-tile-icon">' + (cat ? cat.icon : "🎮") + '</span>';
   },
 
+  renderPlayAction: function (game) {
+    if (game.status !== "live") {
+      return '<span class="btn btn-ghost" style="pointer-events:none">準備中</span>';
+    }
+    let html = '<div class="play-tile-foot">';
+    html += '<a href="./play.html?v=20260712&game=' + encodeURIComponent(game.id) + '" class="btn btn-primary">遊ぶ</a>';
+    if (game.playCaution) {
+      html += '<span class="play-tile-caution">' + escapeHtml(game.playCaution) + "</span>";
+    }
+    html += "</div>";
+    return html;
+  },
+
   renderPlayTile: function (game) {
     const cat = GAME_CATEGORIES[game.category];
     const badge = game.status === "soon"
@@ -24,12 +37,7 @@ const GamesCatalog = {
     html += '<h3>' + escapeHtml(game.name) + '</h3>';
     html += '<p class="play-tile-desc">' + escapeHtml(game.description) + '</p>';
     html += '<span class="play-tile-meta">' + (cat ? cat.name : "") + ' · ' + players + '</span>';
-
-    if (game.status === "live") {
-      html += '<a href="./play.html?game=' + encodeURIComponent(game.id) + '" class="btn btn-primary">遊ぶ</a>';
-    } else {
-      html += '<span class="btn btn-ghost" style="pointer-events:none">準備中</span>';
-    }
+    html += this.renderPlayAction(game);
     html += '</article>';
     return html;
   },
@@ -59,7 +67,8 @@ const GamesCatalog = {
           '<span class="catalog-players">👥 ' + players + '</span>' +
           '<a href="guide.html#' + escapeHtml(game.id) + '" class="catalog-action">説明を見る</a>' +
           (game.status === "live"
-            ? ' · <a href="./play.html?game=' + encodeURIComponent(game.id) + '" class="catalog-action">遊ぶ →</a>'
+            ? ' · <a href="./play.html?v=20260712&game=' + encodeURIComponent(game.id) + '" class="catalog-action">遊ぶ →</a>' +
+              (game.playCaution ? ' <span class="play-tile-caution">' + escapeHtml(game.playCaution) + "</span>" : "")
             : '') +
         '</div>' +
       '</article>'
@@ -226,7 +235,12 @@ const GamesCatalog = {
         html += '<div class="guide-item-foot">';
         html += '<span class="play-tile-meta">👥 ' + g.minPlayers + '〜' + g.maxPlayers + '人</span>';
         if (g.status === "live") {
-          html += '<a href="play.html?game=' + encodeURIComponent(g.id) + '" class="btn btn-primary">このゲームで遊ぶ</a>';
+          html += '<div class="guide-item-play">';
+          html += '<a href="play.html?v=20260712&game=' + encodeURIComponent(g.id) + '" class="btn btn-primary">このゲームで遊ぶ</a>';
+          if (g.playCaution) {
+            html += '<span class="play-tile-caution">' + escapeHtml(g.playCaution) + "</span>";
+          }
+          html += "</div>";
         }
         html += '</div></article>';
       });

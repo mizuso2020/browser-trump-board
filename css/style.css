@@ -332,6 +332,34 @@ input:focus {
   box-shadow: 0 3px 12px rgba(79, 110, 247, 0.3);
 }
 
+.play-tile-foot {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  margin-top: auto;
+  flex-wrap: wrap;
+}
+
+.play-tile-foot .btn {
+  flex: 1;
+  min-width: 4.5rem;
+  margin-top: 0;
+}
+
+.play-tile-caution {
+  font-size: 0.68rem;
+  color: #fbbf24;
+  line-height: 1.3;
+  white-space: nowrap;
+}
+
+.guide-item-play {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
 /* --- ガイドページ --- */
 .guide-intro {
   text-align: center;
@@ -1044,6 +1072,67 @@ input:focus {
   color: #f0c674;
 }
 
+.room-invite-badge {
+  display: block;
+  text-align: center;
+  margin: 0 0 1rem;
+  padding: 0.55rem 0.85rem;
+  border-radius: var(--radius-sm);
+  background: rgba(94, 234, 212, 0.12);
+  border: 1px solid rgba(94, 234, 212, 0.35);
+  font-size: 0.95rem;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+}
+
+.lobby-wait-card {
+  text-align: center;
+  padding: 1.25rem 1rem;
+  margin-bottom: 1rem;
+  border-color: rgba(251, 191, 36, 0.35);
+  background: rgba(251, 191, 36, 0.08);
+}
+
+.lobby-wait-title {
+  margin: 0 0 0.35rem;
+  font-size: 0.82rem;
+  color: #fbbf24;
+  letter-spacing: 0.08em;
+}
+
+.lobby-wait-msg {
+  margin: 0;
+  font-size: 1.05rem;
+  font-weight: 700;
+  line-height: 1.5;
+}
+
+.lobby-wait-hint {
+  text-align: center;
+  margin-top: 0.5rem;
+}
+
+.lobby-refresh-btn {
+  margin-top: 1rem;
+}
+
+.lobby-rejoin-btn {
+  margin-top: 0.5rem;
+  text-align: center;
+  text-decoration: none;
+}
+
+.lobby-sync-error {
+  color: #f87171;
+  margin-top: 0.5rem;
+}
+
+.lobby-sync-status {
+  font-size: 0.78rem;
+  margin-top: 0.35rem;
+  color: var(--text-dim);
+}
+
 .lobby-qr-wrap {
   display: flex;
   justify-content: center;
@@ -1096,6 +1185,17 @@ input:focus {
   margin-top: 0.75rem;
   padding: 0.95rem 1rem;
   font-size: 1.05rem;
+}
+
+.end-game-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-top: 0.5rem;
+}
+
+.end-game-nav h2 {
+  margin-bottom: 0.75rem;
 }
 
 .lobby-game-list {
@@ -3897,4 +3997,295 @@ button.cn-cell:hover {
 
 .ito-gameover-banner h2 {
   color: #f87171;
+}
+
+.ito-play-setup {
+  margin: 1rem 0;
+  padding: 1rem;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: rgba(255, 255, 255, 0.03);
+}
+
+.ito-play-setup .setup-title {
+  margin-top: 0;
+}
+
+.ito-basic-summary {
+  margin: 0.75rem 0 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: rgba(74, 222, 128, 0.1);
+  border: 1px solid rgba(74, 222, 128, 0.25);
+  font-size: 0.95rem;
+}
+
+.ito-basic-table-details {
+  margin-top: 0.5rem;
+}
+
+.ito-basic-table-details summary {
+  cursor: pointer;
+  color: var(--text-dim);
+  font-size: 0.88rem;
+  margin-bottom: 0.35rem;
+}
+
+.ito-basic-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+  font-size: 0.95rem;
+}
+
+.ito-basic-table th,
+.ito-basic-table td {
+  border: 1px solid var(--border);
+  padding: 0.45rem 0.6rem;
+  text-align: center;
+}
+
+.ito-basic-table th {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.ito-basic-table tr.is-active {
+  background: rgba(74, 222, 128, 0.12);
+  font-weight: 700;
+}
+
+.ito-custom-stats {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.ito-custom-stat .player-count-row {
+  margin-top: 0.35rem;
+}
+
+.ito-custom-label {
+  font-weight: 600;
+}
+
+.ito-step-nav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid var(--border);
+  font-size: 0.78rem;
+}
+
+.ito-step-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: var(--text-dim);
+}
+
+.ito-step-item.is-active {
+  color: var(--accent-2);
+  font-weight: 700;
+}
+
+.ito-step-item.is-done {
+  color: #4ade80;
+}
+
+.ito-step-num {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.35rem;
+  height: 1.35rem;
+  border-radius: 50%;
+  background: rgba(255, 255, 255, 0.08);
+  font-weight: 700;
+  font-size: 0.72rem;
+}
+
+.ito-step-item.is-active .ito-step-num {
+  background: var(--accent);
+  color: #fff;
+}
+
+.ito-step-item.is-done .ito-step-num {
+  background: rgba(74, 222, 128, 0.2);
+  color: #4ade80;
+}
+
+.ito-step-arrow {
+  color: var(--text-dim);
+  opacity: 0.5;
+}
+
+.ito-setup-step-note {
+  margin: 0 0 0.5rem;
+}
+
+.ito-reveal-flip-zone {
+  margin: 0.75rem 0 1rem;
+}
+
+.ito-flip-hand {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  justify-content: center;
+  perspective: 900px;
+}
+
+.ito-flip-card {
+  width: 3.2rem;
+  height: 4.5rem;
+  perspective: 700px;
+}
+
+.ito-flip-inner {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  transform-style: preserve-3d;
+  transition: transform 0.55s cubic-bezier(0.4, 0.2, 0.2, 1);
+  transition-delay: var(--flip-delay, 0ms);
+}
+
+.ito-reveal-flip-zone.is-flipped .ito-flip-inner {
+  transform: rotateY(180deg);
+}
+
+.ito-flip-front,
+.ito-flip-back {
+  position: absolute;
+  inset: 0;
+  border-radius: 0.45rem;
+  backface-visibility: hidden;
+  -webkit-backface-visibility: hidden;
+}
+
+.ito-flip-front {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: linear-gradient(145deg, #1e3a5f, #0f172a);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08), 0 4px 12px rgba(0, 0, 0, 0.25);
+}
+
+.ito-flip-q {
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 700;
+  font-size: 1.35rem;
+}
+
+.ito-flip-back {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transform: rotateY(180deg);
+  background: linear-gradient(145deg, rgba(94, 234, 212, 0.22), rgba(30, 58, 95, 0.95));
+  border: 2px solid rgba(94, 234, 212, 0.55);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.3);
+}
+
+.ito-flip-num {
+  font-weight: 800;
+  font-size: 1.35rem;
+  color: var(--accent-2);
+}
+
+.ito-reveal-btn.hidden {
+  display: none;
+}
+
+.ito-reveal-meta {
+  margin-top: 0.75rem;
+  text-align: center;
+}
+
+.ito-hand-backs,
+.ito-hand-back-preview {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  justify-content: center;
+  margin: 0.75rem 0;
+}
+
+.ito-card-back,
+.ito-play-card-back {
+  display: inline-block;
+  width: 3rem;
+  height: 4.2rem;
+  border-radius: 0.45rem;
+  background: linear-gradient(145deg, #1e3a5f, #0f172a);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.08);
+  position: relative;
+}
+
+.ito-card-back::after,
+.ito-play-card-back::after {
+  content: "?";
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: rgba(255, 255, 255, 0.35);
+  font-weight: 700;
+}
+
+.ito-field-card--back {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 4.5rem;
+  min-height: 5.5rem;
+  padding: 0.35rem;
+  border-radius: 0.5rem;
+  background: linear-gradient(145deg, #1e3a5f, #0f172a);
+  border: 2px solid rgba(255, 255, 255, 0.25);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.25);
+}
+
+.ito-card-back-name {
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-align: center;
+  line-height: 1.2;
+  color: #e2e8f0;
+  word-break: break-all;
+}
+
+.ito-field-card--open {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.55rem;
+  border-radius: 0.45rem;
+  background: rgba(74, 222, 128, 0.12);
+  border: 1px solid rgba(74, 222, 128, 0.35);
+}
+
+.ito-field-note {
+  margin-top: 0.5rem;
+  text-align: center;
+}
+
+.ito-play-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.35rem;
+  min-height: 7rem;
+}
+
+.ito-play-card-label {
+  font-weight: 700;
 }

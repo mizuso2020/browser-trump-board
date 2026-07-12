@@ -9,8 +9,8 @@ function getGameModule(gameId) {
 }
 
 const app = document.getElementById("app");
-const roomCode = getQueryParam("code");
-const mode = getQueryParam("mode") || "local";
+const roomCode = (getQueryParam("code") || sessionStorage.getItem("partyGames_roomCode") || "").toUpperCase();
+const mode = getQueryParam("mode") || localStorage.getItem("partyGames_mode") || sessionStorage.getItem("partyGames_roomMode") || (roomCode ? "room" : "local");
 let playerId = getQueryParam("player");
 
 let room = null;
@@ -18,7 +18,16 @@ let playerSecret = null;
 let hostSecrets = null;
 let pollTimer = null;
 let roomActionLock = false;
+let pendingRoomUpdate = null;
 let discussionTimerId = null;
+let lobbyAutoSyncTimer = null;
+let lastSyncError = null;
+let lastServerPhase = null;
+let lastServerGame = null;
+let lobbyAutoSyncActive = false;
+let syncRequestId = 0;
+let syncChain = Promise.resolve();
+let recoverRedirected = false;
 
 function clearDiscussionTimer() {
   if (discussionTimerId) {
@@ -102,8 +111,71 @@ if (!roomCode) {
   boot();
 }
 
+function pickPlayerIdFromRoom(targetRoom) {
+  if (!targetRoom || !Array.isArray(targetRoom.players)) return Sync.uid;
+  const candidates = [
+    getQueryParam("player"),
+    sessionStorage.getItem("partyGames_roomPlayerId"),
+    sessionStorage.getItem("partyGames_playerId"),
+    getCookie("partyGames_playerId"),
+    Sync.uid
+  ];
+  for (let i = 0; i < candidates.length; i++) {
+    const pid = candidates[i];
+    if (pid && /^[a-z0-9]{6,16}$/.test(pid) && targetRoom.players.some(function (p) { return p.id === pid; })) {
+      return pid;
+    }
+  }
+  return Sync.uid;
+}
+
+function updateRoomUrlPlayer(pid) {
+  if (!pid || !/^[a-z0-9]{6,16}$/.test(pid)) return;
+  const params = new URLSearchParams(window.location.search);
+  params.set("player", pid);
+  params.set("code", roomCode);
+  params.set("mode", mode);
+  const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame");
+  if (game) params.set("game", game);
+  window.history.replaceState(null, "", window.location.pathname + "?" + params.toString());
+}
+
+async function resolvePlayerIdentity(targetRoom) {
+  if (!Sync.isOnline() || !targetRoom) return;
+
+  const picked = pickPlayerIdFromRoom(targetRoom);
+  if (targetRoom.players.some(function (p) { return p.id === picked; })) {
+    playerId = picked;
+    rememberRoomSession(targetRoom.code || roomCode, mode, playerId);
+    updateRoomUrlPlayer(playerId);
+    return;
+  }
+
+  const name = loadPlayerName();
+  if (!name) return;
+
+  try {
+    const resolved = await Sync.resolvePlayer(roomCode, name, playerId);
+    if (resolved && resolved.playerId && targetRoom.players.some(function (p) { return p.id === resolved.playerId; })) {
+      playerId = resolved.playerId;
+      rememberRoomSession(targetRoom.code || roomCode, mode, playerId);
+      updateRoomUrlPlayer(playerId);
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
 async function boot() {
   try {
+    if (roomCode && mode === "local" && !getQueryParam("player")) {
+      const params = new URLSearchParams(window.location.search);
+      params.set("mode", "room");
+      params.set("code", roomCode);
+      window.location.replace(window.location.pathname + "?" + params.toString());
+      return;
+    }
+
     if ((mode === "online" || mode === "room") && !Sync.canUseMultiDevice(mode)) {
       showFatal("ルーム機能が利用できません。しばらくしてから再度お試しください。");
       return;
@@ -111,23 +183,52 @@ async function boot() {
 
     await Sync.init(mode);
 
-    if (Sync.isOnline()) {
-      playerId = Sync.uid;
-    } else if (!playerId) {
-      showFatal("プレイヤー情報がありません。トップから入り直してください。");
-      return;
-    }
-
     room = await Sync.load(roomCode);
     if (!room) {
       showFatal("ルームが見つかりません。トップから作り直してください。");
       return;
     }
 
+    if (Sync.isOnline()) {
+      await resolvePlayerIdentity(room);
+      if (room.phase !== "lobby" && room.game) {
+        await loadSecretsWithRetry();
+      }
+    } else if (!playerId) {
+      showFatal("プレイヤー情報がありません。トップから入り直してください。");
+      return;
+    }
+
+    if (Sync.isOnline() && !getMe()) {
+      await resolvePlayerIdentity(room);
+      if (!getMe() && room.phase === "lobby") {
+        try {
+          const name = loadPlayerName() || "ゲスト";
+          const sameName = room.players.find(function (p) { return p.name === name; });
+          if (sameName) {
+            playerId = sameName.id;
+            rememberRoomSession(roomCode, mode, playerId);
+            updateRoomUrlPlayer(playerId);
+          } else {
+            await Sync.joinOnline(roomCode, name);
+            room = await Sync.load(roomCode);
+          }
+        } catch (joinErr) {
+          showFatal(joinErr.message || "ルームへの参加に失敗しました");
+          return;
+        }
+      }
+    }
+
+    if (!getMe()) {
+      showNotInRoomMessage();
+      return;
+    }
+
     if (room.game === "werewolf" && room.gameState) {
       const phaseBefore = room.phase;
       WerewolfGame.normalizePhase(room);
-      if (phaseBefore !== room.phase) {
+      if (phaseBefore !== room.phase && isHost()) {
         await Sync.save(room);
       }
     }
@@ -157,6 +258,12 @@ async function boot() {
       }
     }
     pollTimer = Sync.subscribe(roomCode, onRoomUpdate);
+    bindRoomSyncRefresh();
+    lastServerPhase = room.phase;
+    lastServerGame = room.game;
+    if (Sync.isOnline() && !isHost() && room.phase === "lobby") {
+      await pullRoomFromServer();
+    }
     await tryAutoStartPreferredGame();
     render();
   } catch (err) {
@@ -173,22 +280,275 @@ async function loadSecrets() {
   }
 }
 
+async function loadSecretsWithRetry() {
+  await loadSecrets();
+  if (!room || !room.game) return;
+  const needsRole = room.game === "werewolf" && room.phase === "wolf_ready";
+  if (needsRole && (!playerSecret || !playerSecret.role)) {
+    await new Promise(function (resolve) { setTimeout(resolve, 600); });
+    await loadSecrets();
+  }
+}
+
+function roomUpdatedAt(value) {
+  const n = Number(value);
+  return isFinite(n) ? n : 0;
+}
+
+function isServerGameStarted(latest) {
+  if (!latest) return false;
+  const phase = latest.phase || "lobby";
+  return !!(latest.game && phase !== "lobby");
+}
+
+function isLocalInLobby() {
+  return !room || !room.game || room.phase === "lobby";
+}
+
+function rememberGameStartedAt(value) {
+  const n = roomUpdatedAt(value);
+  if (!n) return;
+  sessionStorage.setItem("partyGames_knownGameStartedAt", String(n));
+}
+
+function knownGameStartedAt() {
+  return roomUpdatedAt(sessionStorage.getItem("partyGames_knownGameStartedAt"));
+}
+
+function shouldForceRecover(latest) {
+  if (isHost() || !latest || recoverRedirected) return false;
+  if (isLocalStuckInLobby(latest)) return true;
+  const serverAt = roomUpdatedAt(latest.gameStartedAt);
+  if (serverAt && isLocalInLobby() && serverAt > knownGameStartedAt()) return true;
+  if (isServerGameStarted(latest) && isLocalInLobby()) return true;
+  return false;
+}
+
+function isLocalStuckInLobby(latest) {
+  if (isHost() || !latest) return false;
+  return isServerGameStarted(latest) && isLocalInLobby();
+}
+
+function hardRecoverToRoom(latest) {
+  if (recoverRedirected || isHost() || !latest) return;
+  recoverRedirected = true;
+  rememberRoomSession(latest.code || roomCode, mode, playerId);
+  const params = new URLSearchParams();
+  params.set("code", String(latest.code || roomCode).toUpperCase());
+  params.set("mode", mode || "room");
+  if (playerId && /^[a-z0-9]{6,16}$/.test(playerId)) params.set("player", playerId);
+  const game = latest.game || latest.pendingGame || getQueryParam("game") || "werewolf";
+  if (game) params.set("game", game);
+  params.set("recover", String(Date.now()));
+  window.location.replace("room.html?" + params.toString());
+}
+
+function shouldApplyServerRoom(latest) {
+  if (!latest || !latest.code || !Array.isArray(latest.players)) return false;
+  if (isLocalStuckInLobby(latest)) return true;
+  if (isServerGameStarted(latest) && isLocalInLobby()) return true;
+  const serverAt = roomUpdatedAt(latest.gameStartedAt);
+  if (serverAt && isLocalInLobby() && serverAt > knownGameStartedAt()) return true;
+  const prevAt = roomUpdatedAt(room && room.updatedAt);
+  const nextAt = roomUpdatedAt(latest.updatedAt);
+  return nextAt >= prevAt;
+}
+
+async function finishRoomSync(latest) {
+  if (!latest || latest.__syncFailed) return;
+  await resolvePlayerIdentity(latest);
+  if (shouldForceRecover(latest)) {
+    hardRecoverToRoom(latest);
+    return;
+  }
+  await applyRoomUpdate(latest);
+  if (latest.gameStartedAt) rememberGameStartedAt(latest.gameStartedAt);
+  if (isLocalStuckInLobby(latest)) {
+    hardRecoverToRoom(latest);
+  }
+}
+
+function clearLobbyAutoSync() {
+  if (lobbyAutoSyncTimer) {
+    clearInterval(lobbyAutoSyncTimer);
+    lobbyAutoSyncTimer = null;
+  }
+  lobbyAutoSyncActive = false;
+}
+
+function startLobbyAutoSync() {
+  if (lobbyAutoSyncActive || !Sync.isOnline() || isHost()) return;
+  lobbyAutoSyncActive = true;
+  lobbyAutoSyncTimer = setInterval(function () {
+    if (room && room.phase === "lobby" && !roomActionLock) {
+      pullRoomFromServer();
+    }
+  }, 1500);
+}
+
+function bindRoomSyncRefresh() {
+  if (!Sync.isOnline()) return;
+
+  document.addEventListener("visibilitychange", function () {
+    if (document.visibilityState === "visible") pullRoomFromServer();
+  });
+
+  window.addEventListener("focus", function () {
+    pullRoomFromServer();
+  });
+
+  window.addEventListener("pageshow", function (e) {
+    if (e.persisted) pullRoomFromServer();
+  });
+}
+
+function pullRoomFromServer() {
+  const reqId = ++syncRequestId;
+  syncChain = syncChain.then(async function () {
+    if (reqId !== syncRequestId) return { ok: false, stale: true };
+    if (!roomCode || roomActionLock) return { ok: false };
+    try {
+      const latest = await Sync.load(roomCode);
+      if (reqId !== syncRequestId) return { ok: false, stale: true };
+      if (!latest || !latest.code) {
+        lastSyncError = "ルーム情報を取得できませんでした";
+        render();
+        return { ok: false };
+      }
+      lastSyncError = null;
+      lastServerPhase = latest.phase || "lobby";
+      lastServerGame = latest.game || null;
+      if (roomActionLock) {
+        pendingRoomUpdate = latest;
+        return { ok: false, queued: true };
+      }
+      await finishRoomSync(latest);
+      if (recoverRedirected) return { ok: true, recovering: true };
+      if (pollTimer && typeof pollTimer.resetPollCache === "function") {
+        pollTimer.resetPollCache();
+      }
+      return { ok: true, phase: room.phase, game: room.game, serverPhase: lastServerPhase };
+    } catch (e) {
+      if (reqId !== syncRequestId) return { ok: false, stale: true };
+      lastSyncError = e.message || "通信に失敗しました";
+      render();
+      return { ok: false, error: lastSyncError };
+    }
+  });
+  return syncChain;
+}
+
+async function forceRoomSync() {
+  const result = await pullRoomFromServer();
+  if (result && result.error) {
+    showToast(result.error);
+  }
+  return result || { ok: false };
+}
+
+async function flushPendingRoomUpdate() {
+  if (!pendingRoomUpdate) return;
+  const latest = pendingRoomUpdate;
+  pendingRoomUpdate = null;
+  await applyRoomUpdate(latest);
+}
+
 async function onRoomUpdate(latest) {
-  if (!latest || roomActionLock) return;
-  const prev = JSON.stringify(room);
-  const next = JSON.stringify(latest);
-  if (prev === next) return;
-  if (room.updatedAt && latest.updatedAt && latest.updatedAt < room.updatedAt) return;
-  room = latest;
-  if (!room.game && room.phase === "lobby") {
+  if (!latest) return;
+  if (latest.__syncFailed) {
+    lastSyncError = latest.error || "通信に失敗しました";
+    render();
+    return;
+  }
+  if (roomActionLock) {
+    pendingRoomUpdate = latest;
+    return;
+  }
+  lastServerPhase = latest.phase || "lobby";
+  lastServerGame = latest.game || null;
+  await finishRoomSync(latest);
+}
+
+async function syncRoomFromServer(latest) {
+  if (!shouldApplyServerRoom(latest)) return;
+
+  lastServerPhase = latest.phase || "lobby";
+  lastServerGame = latest.game || null;
+
+  const prevGame = room && room.game;
+  const prevPhase = room && room.phase;
+
+  room = JSON.parse(JSON.stringify(latest));
+
+  if (room.game === "werewolf" && room.gameState) {
+    WerewolfGame.normalizePhase(room);
+  }
+  if (!room.game && room.phase === "lobby" && isHost()) {
     WerewolfGame.syncLobbySetupPlayerCount(room);
     WordWolfGame.syncLobbySetupPlayerCount(room);
   }
-  render();
+
+  try {
+    if (Sync.isOnline()) {
+      const gameStarted = !prevGame && room.game;
+      const leftLobby = prevPhase === "lobby" && room.phase !== "lobby";
+      if (gameStarted || leftLobby || (room.game && !playerSecret)) {
+        await loadSecretsWithRetry();
+      }
+    }
+  } finally {
+    render();
+  }
+}
+
+async function applyRoomUpdate(latest) {
+  if (!latest || latest.__syncFailed || !latest.code) return;
+  if (!shouldApplyServerRoom(latest)) return;
+
+  const prevGame = room && room.game;
+  const prevPhase = room && room.phase;
+  const majorChange = prevGame !== latest.game || prevPhase !== latest.phase;
+
+  if (!majorChange) {
+    const prev = JSON.stringify(room);
+    const next = JSON.stringify(latest);
+    if (prev === next) return;
+  }
+
+  await syncRoomFromServer(latest);
 }
 
 function showFatal(message) {
   app.innerHTML = '<section class="card"><h2>エラー</h2><p>' + escapeHtml(message) + '</p><a href="index.html" class="btn btn-primary">トップへ</a></section>';
+}
+
+function showNotInRoomMessage() {
+  const started = room && room.phase && room.phase !== "lobby";
+  const msg = started
+    ? "この端末のプレイヤーIDがずれています。下のボタンから、同じ名前でもう一度入り直してください。"
+    : "このルームに参加していません。参加リンクから入り直してください。";
+  const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || (room && room.pendingGame) || "werewolf";
+  const joinUrl = RoomQr.buildJoinUrl(roomCode, { game: game, mode: mode === "online" ? "online" : "room" });
+  app.innerHTML =
+    '<section class="card"><h2>参加できません</h2><p>' + escapeHtml(msg) + '</p>' +
+    '<p class="note">名前: ' + escapeHtml(loadPlayerName() || "（未保存）") + '</p>' +
+    '<a href="' + escapeHtml(joinUrl) + '" class="btn btn-primary">参加リンクを開く</a>' +
+    '<button type="button" class="btn btn-secondary btn-block" data-action="hard-reload-room" style="margin-top:0.5rem">IDを再設定して入り直す</button>' +
+    '<a href="index.html" class="btn btn-secondary" style="margin-top:0.5rem">トップへ</a></section>';
+  bindHardReloadOnly();
+}
+
+function bindHardReloadOnly() {
+  const btn = app.querySelector("[data-action=hard-reload-room]");
+  if (!btn) return;
+  btn.addEventListener("click", async function () {
+    if (room) await resolvePlayerIdentity(room);
+    rememberRoomSession(roomCode, mode, playerId);
+    window.location.href = buildRoomUrl(roomCode, mode, {
+      playerId: playerId,
+      game: getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame")
+    });
+  });
 }
 
 function getMe() {
@@ -253,6 +613,7 @@ async function saveAndRender(secretBundle) {
     }
   } finally {
     roomActionLock = false;
+    flushPendingRoomUpdate();
   }
 }
 
@@ -265,9 +626,21 @@ function updatePageTheme() {
 
 function render() {
   updatePageTheme();
+
+  if (!isHost() && Sync.isOnline() && isLocalInLobby()) {
+    if (lastServerPhase && lastServerPhase !== "lobby") {
+      hardRecoverToRoom({
+        code: roomCode,
+        game: lastServerGame,
+        phase: lastServerPhase
+      });
+      return;
+    }
+  }
+
   const me = getMe();
   if (!me) {
-    app.innerHTML = '<section class="card"><h2>このルームに参加していません</h2><a href="index.html">トップへ</a></section>';
+    showNotInRoomMessage();
     return;
   }
 
@@ -280,15 +653,18 @@ function render() {
       ? '<span class="status-dot online"></span>各自のスマホ'
       : '<span class="status-dot online"></span>オンライン';
 
-  const roomTitle = room.phase === "lobby"
+  const roomTitle = room.mode === "local"
     ? "ルーム"
-    : (room.mode === "local" ? "ルーム" : ('ルーム <span class="room-code">' + escapeHtml(room.code) + '</span>'));
+    : ('ルーム <span class="room-code">' + escapeHtml(room.code || roomCode) + '</span>');
   body += '<header class="header" style="padding-top:1rem"><div class="logo">' + roomTitle + '</div>';
   body += '<p class="tagline">' + modeLabel + '　' + escapeHtml(me.name) + (ctx.isHost ? '（ホスト）' : '') + '</p></header>';
 
   if (!room.game || room.phase === "lobby") {
     body += renderLobby(ctx);
-  } else if (room.game === "ito") {
+    startLobbyAutoSync();
+  } else {
+    clearLobbyAutoSync();
+    if (room.game === "ito") {
     body += ItoGame.render(ctx);
   } else if (room.game === "werewolf") {
     body += WerewolfGame.render(ctx);
@@ -327,8 +703,13 @@ function render() {
   } else if (room.game === "matryoshka_ttt") {
     body += MatryoshkaTttGame.render(ctx);
   }
+  }
 
-  if (room.mode !== "local") {
+  if (isGameFinished(room)) {
+    body += renderEndGameNav(ctx);
+  }
+
+  if (room.mode !== "local" && !isGameFinished(room)) {
     body += '<section class="card"><button class="btn btn-secondary" data-action="copy-link">参加リンクをコピー</button>';
     if (room.mode === "room") {
       body += '<p class="note">QRコードを読み取るか、リンクを送って「各自のスマホで遊ぶ」から参加してもらってください。</p>';
@@ -430,36 +811,141 @@ function renderLobbyCodeCard(code) {
 function renderLobbyQr(room) {
   const wrap = document.getElementById("lobbyQrCode");
   if (!wrap) return;
-  const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.game || "werewolf";
+  const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.pendingGame || room.game || "werewolf";
   const mode = room.mode === "online" ? "online" : "room";
   const joinUrl = RoomQr.buildJoinUrl(room.code, { game: game, mode: mode });
   RoomQr.render(wrap, joinUrl);
   RoomQr.bindJoinLink(joinUrl);
 }
 
+function isModeAvailableForGame(meta, roomMode) {
+  if (!meta || !meta.modesSoon) return true;
+  return meta.modesSoon.indexOf(roomMode) === -1;
+}
+
+var FINISHED_GAME_PHASES = {
+  wolf_end: true,
+  wordwolf_end: true,
+  ito_gameover: true,
+  ito_victory: true,
+  poker_result: true,
+  codenames_result: true,
+  daifugo_result: true,
+  doubt_result: true,
+  oldmaid_result: true,
+  coyote_result: true,
+  sevens_result: true
+};
+
+function isGameFinished(targetRoom) {
+  if (!targetRoom || !targetRoom.game || targetRoom.phase === "lobby") return false;
+  const gs = targetRoom.gameState;
+  if (gs && gs.finished === true) return true;
+  if (gs && gs.gameOver === true) return true;
+  return !!FINISHED_GAME_PHASES[targetRoom.phase];
+}
+
+function getPlayableGamesForRoom(targetRoom, options) {
+  options = options || {};
+  const count = targetRoom.players.length;
+  const roomMode = targetRoom.mode || "local";
+  const excludeId = options.excludeCurrent ? targetRoom.game : null;
+
+  return GameRegistry.live().filter(function (meta) {
+    if (excludeId && meta.id === excludeId) return false;
+    if (!getGameModule(meta.id)) return false;
+    if (count < meta.minPlayers || count > meta.maxPlayers) return false;
+    if (roomMode !== "local" && !isModeAvailableForGame(meta, roomMode)) return false;
+    return true;
+  });
+}
+
+function renderEndGameNav(ctx) {
+  const html = [];
+  const count = ctx.room.players.length;
+  const games = getPlayableGamesForRoom(ctx.room, { excludeCurrent: true });
+
+  html.push('<section class="card end-game-nav">');
+  html.push("<h2>次にやること</h2>");
+  html.push('<a href="index.html" class="btn btn-secondary btn-block">トップへ</a>');
+
+  if (ctx.isHost) {
+    html.push('<p class="note" style="margin-top:1rem">この人数（' + count + "人）で遊べるゲーム</p>");
+    if (!games.length) {
+      html.push('<p class="note">いまの人数で他に遊べるゲームはありません</p>');
+    } else {
+      html.push('<div class="lobby-game-list end-game-list">');
+      games.forEach(function (meta) {
+        html.push('<button type="button" class="btn btn-primary btn-block" data-action="start-game" data-game="' + meta.id + '">');
+        html.push(escapeHtml(meta.name) + "（" + meta.minPlayers + "〜" + meta.maxPlayers + "人）");
+        html.push("</button>");
+      });
+      html.push("</div>");
+    }
+    html.push('<button type="button" class="btn btn-secondary btn-block" data-action="back-lobby" style="margin-top:0.75rem">ロビーに戻る</button>');
+  } else {
+    html.push('<p class="note" style="margin-top:1rem">ほかのゲームはホストが選べます</p>');
+  }
+
+  html.push("</section>");
+  return html.join("");
+}
+
+function getBoardMarkHint(gameId, targetRoom, me) {
+  if (!me || !targetRoom || !Array.isArray(targetRoom.players)) return "";
+  const idx = targetRoom.players.findIndex(function (p) { return p.id === me.id; });
+  if (idx < 0) return "";
+  if (gameId === "matryoshka_ttt") return idx === 0 ? "赤（先手）" : "青（後攻）";
+  if (gameId === "tic_tac_toe" || gameId === "vanishing_ttt") return idx === 0 ? "〇（先攻）" : "×（後攻）";
+  return "";
+}
+
 function renderLobby(ctx) {
   const html = [];
-  const prefGame = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame");
+  const prefGame = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || ctx.room.pendingGame || ctx.room.game;
   const prefMeta = prefGame ? GameRegistry.get(prefGame) : null;
   const isWerewolfLobby = prefMeta && prefMeta.id === "werewolf" && prefMeta.status === "live";
   const isWordwolfLobby = prefMeta && prefMeta.id === "wordwolf" && prefMeta.status === "live";
+  const isItoLobby = prefMeta && prefMeta.id === "ito" && prefMeta.status === "live";
 
-  if (ctx.room.mode !== "local") {
+  if (ctx.room.mode !== "local" && ctx.isHost) {
     html.push(renderLobbyCodeCard(ctx.room.code));
   }
 
+  if (!ctx.isHost && ctx.room.mode !== "local" && room.phase === "lobby") {
+    html.push('<section class="card lobby-wait-card">');
+    html.push('<p class="lobby-wait-title">待機中</p>');
+    html.push('<p class="lobby-wait-msg">ホストの準備が終わるまでお待ちください</p>');
+    html.push('<p class="note lobby-sync-status">ルーム ' + escapeHtml(ctx.room.code || roomCode) + ' ／ サーバー: ' + escapeHtml(lastServerPhase || (room.phase || "lobby")) + (lastServerGame ? " (" + escapeHtml(lastServerGame) + ")" : "") + ' ／ 更新: ' + roomUpdatedAt(room.updatedAt) + '</p>');
+    if (lastSyncError) {
+      html.push('<p class="note lobby-sync-error">' + escapeHtml(lastSyncError) + '</p>');
+    }
+    html.push('<button type="button" class="btn btn-secondary btn-block lobby-refresh-btn" data-action="refresh-room">画面を更新</button>');
+    html.push('<button type="button" class="btn btn-secondary btn-block" data-action="hard-reload-room">強制再読み込み</button>');
+    const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || ctx.room.pendingGame || "werewolf";
+    const rejoinUrl = RoomQr.buildJoinUrl(ctx.room.code || roomCode, { game: game, mode: "room" });
+    html.push('<a href="' + escapeHtml(rejoinUrl) + '" class="btn btn-primary btn-block lobby-rejoin-btn">参加リンクから入り直す</a>');
+    html.push('</section>');
+  }
+
   if (isWerewolfLobby) {
-    WerewolfGame.syncLobbySetupPlayerCount(ctx.room);
+    let customInvalid = false;
+    if (ctx.isHost) {
+      WerewolfGame.syncLobbySetupPlayerCount(ctx.room);
+      const lobby = WerewolfGame.ensureLobbySetup(ctx.room);
+      customInvalid = lobby.selectedSetupId === "custom" &&
+        !WerewolfGame.validateCustomSetup(ctx.room.players.length, lobby.customRoles).ok;
+    }
     const prefOk = ctx.room.players.length >= prefMeta.minPlayers && ctx.room.players.length <= prefMeta.maxPlayers;
-    const lobby = WerewolfGame.ensureLobbySetup(ctx.room);
-    const customInvalid = lobby.selectedSetupId === "custom" &&
-      !WerewolfGame.validateCustomSetup(ctx.room.players.length, lobby.customRoles).ok;
 
     html.push('<p class="note lobby-game-label">🎯 <strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
     html.push(WerewolfGame.renderLobbySetup(ctx.room, ctx.isHost));
 
-    if (ctx.isHost) {
+    if (!ctx.isHost) {
+      html.push('<p class="note lobby-wait-hint">ゲームが始まると自動で画面が切り替わります</p>');
+    } else if (ctx.isHost) {
       html.push('<section class="card lobby-start-card">');
+      html.push('<p class="note">全員が入ってから<strong>10秒ほど待って</strong>から始めてください</p>');
       html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="werewolf" ' + ((!prefOk || customInvalid) ? "disabled" : "") + '>');
       html.push('人狼を始める（' + ctx.room.players.length + '人）');
       html.push('</button>');
@@ -487,17 +973,48 @@ function renderLobby(ctx) {
       }
       html.push('</section>');
     }
-  } else if (prefMeta && prefMeta.status === "live" && (ctx.isHost || ctx.room.mode === "local")) {
+  } else if (isItoLobby) {
+    ItoGame.syncLobbySetupPlayerCount(ctx.room);
     const prefOk = ctx.room.players.length >= prefMeta.minPlayers && ctx.room.players.length <= prefMeta.maxPlayers;
-    html.push('<section class="card lobby-start-card">');
-    html.push('<p class="note">🎯 選択中：<strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
-    html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="' + prefMeta.id + '">');
-    html.push(prefMeta.name + ' を始める（' + ctx.room.players.length + '人）');
-    html.push('</button>');
-    if (!prefOk) {
-      html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人に人数を合わせてください</p>');
+
+    html.push('<p class="note lobby-game-label">🎯 <strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
+    html.push(ItoGame.renderLobbySetup(ctx.room, ctx.isHost || ctx.room.mode === "local"));
+
+    if (ctx.isHost || ctx.room.mode === "local") {
+      html.push('<section class="card lobby-start-card">');
+      html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="ito" ' + (!prefOk ? "disabled" : "") + '>');
+      html.push('イトを始める（' + ctx.room.players.length + '人）');
+      html.push('</button>');
+      if (!prefOk) {
+        html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人揃ってから始められます</p>');
+      }
+      html.push('</section>');
     }
-    html.push('</section>');
+  } else if (prefMeta && prefMeta.status === "live") {
+    const prefOk = ctx.room.players.length >= prefMeta.minPlayers && ctx.room.players.length <= prefMeta.maxPlayers;
+    const markHint = getBoardMarkHint(prefMeta.id, ctx.room, ctx.me);
+    html.push('<p class="note lobby-game-label">🎯 <strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
+    if (markHint && ctx.room.mode !== "local") {
+      html.push('<p class="note">あなたの手番: <strong>' + escapeHtml(markHint) + "</strong></p>");
+    }
+    if (ctx.isHost || ctx.room.mode === "local") {
+      html.push('<section class="card lobby-start-card">');
+      if (prefMeta.maxPlayers === 2) {
+        html.push('<p class="note">2人揃ったら開始してください（ホストが先攻）</p>');
+      }
+      html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="' + prefMeta.id + '" ' + (!prefOk ? "disabled" : "") + '>');
+      html.push(prefMeta.name + ' を始める（' + ctx.room.players.length + '人）');
+      html.push('</button>');
+      if (!prefOk) {
+        html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人に人数を合わせてください</p>');
+      }
+      html.push('</section>');
+    } else if (ctx.room.mode !== "local") {
+      const waitMsg = prefMeta.maxPlayers === 2
+        ? "2人揃うとホストが始めます。始まると自動で画面が切り替わります"
+        : "ホストが始めるのを待っています";
+      html.push('<p class="note lobby-wait-hint">' + waitMsg + "</p>");
+    }
   }
 
   html.push('<section class="card"><h2>プレイヤー（' + ctx.room.players.length + '人）</h2><ul class="player-list">');
@@ -506,7 +1023,7 @@ function renderLobby(ctx) {
   });
   html.push('</ul></section>');
 
-  if (ctx.isHost && !isWerewolfLobby && !isWordwolfLobby) {
+  if (ctx.isHost && !isWerewolfLobby && !isWordwolfLobby && !isItoLobby) {
     html.push('<section class="card"><h2>ゲームを選ぶ</h2>');
 
     Object.keys(GAME_CATEGORIES).forEach(function (catKey) {
@@ -528,7 +1045,7 @@ function renderLobby(ctx) {
     });
 
     html.push('</section>');
-  } else if (!isWerewolfLobby && !isWordwolfLobby) {
+  } else if (!isWerewolfLobby && !isWordwolfLobby && !isItoLobby) {
     html.push('<section class="card"><p>ホストがゲームを選ぶのを待っています…</p></section>');
   }
 
@@ -586,15 +1103,35 @@ async function handleAction(action, data, ctx) {
         showToast("ゲームを読み込めませんでした");
         return;
       }
-      if (room.players.length < startMeta.minPlayers || room.players.length > startMeta.maxPlayers) {
-        showToast(startMeta.name + " は " + startMeta.minPlayers + "〜" + startMeta.maxPlayers + "人です（現在 " + room.players.length + "人）");
-        return;
-      }
 
       roomActionLock = true;
       try {
+        const savedLobbyWerewolf = room.lobbyWerewolf ? JSON.parse(JSON.stringify(room.lobbyWerewolf)) : null;
+        const savedLobbyIto = room.lobbyIto ? JSON.parse(JSON.stringify(room.lobbyIto)) : null;
+
+        if (Sync.isOnline()) {
+          const fresh = await Sync.load(room.code);
+          if (fresh) {
+            room = fresh;
+            if (savedLobbyWerewolf) room.lobbyWerewolf = savedLobbyWerewolf;
+            if (savedLobbyIto) room.lobbyIto = savedLobbyIto;
+          }
+        }
+
+        if (room.players.length < startMeta.minPlayers || room.players.length > startMeta.maxPlayers) {
+          showToast(startMeta.name + " は " + startMeta.minPlayers + "〜" + startMeta.maxPlayers + "人です（現在 " + room.players.length + "人）");
+          return;
+        }
+
         room.game = data.game;
+
+        if (data.game === "ito") {
+          ItoGame.ensureLobbySetup(room);
+        }
+
         room = game.init(room);
+        room.gameStartedAt = Date.now();
+        rememberGameStartedAt(room.gameStartedAt);
 
         if (data.game === "werewolf" && room.lobbyWerewolf) {
           WerewolfGame.applyLobbySetupToGameState(room);
@@ -652,12 +1189,17 @@ async function handleAction(action, data, ctx) {
       room.game = null;
       room.phase = "lobby";
       room.gameState = null;
+      if (room.gameStartedAt) delete room.gameStartedAt;
       await saveAndRender();
+      break;
+
+    case "go-top":
+      window.location.href = "index.html";
       break;
 
     case "copy-link":
       {
-        const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.game || "werewolf";
+        const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.pendingGame || room.game || "werewolf";
         const mode = room.mode === "online" ? "online" : "room";
         const joinUrl = RoomQr.buildJoinUrl(room.code, { game: game, mode: mode });
         const text = "ルームコード: " + room.code + "\n参加URL:\n" + joinUrl;
@@ -665,7 +1207,39 @@ async function handleAction(action, data, ctx) {
       }
       break;
 
+    case "refresh-room":
+      {
+        const beforePhase = room.phase;
+        const result = await forceRoomSync();
+        if (result.ok && beforePhase === "lobby" && room.phase === "lobby") {
+          showToast("サーバー: " + (result.serverPhase || "?") + " ／ この画面: lobby");
+        } else if (result.ok) {
+          showToast("ルームを更新しました（" + (room.phase || "") + "）");
+        }
+      }
+      break;
+
+    case "hard-reload-room":
+      rememberRoomSession(roomCode, mode, playerId);
+      window.location.href = buildRoomUrl(roomCode, mode, {
+        playerId: playerId,
+        game: getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame")
+      });
+      break;
+
     /* --- Ito（クモノイト） --- */
+    case "ito-lobby-select-setup":
+      if (!ctx.isHost && ctx.room.mode !== "local") return;
+      room = ItoGame.selectLobbySetup(room, data.setup);
+      await saveAndRender();
+      break;
+
+    case "ito-lobby-custom":
+      if (!ctx.isHost && ctx.room.mode !== "local") return;
+      room = ItoGame.adjustLobbyCustom(room, data.stat, parseInt(data.delta, 10));
+      await saveAndRender();
+      break;
+
     case "ito-random-theme":
       if (!ItoGame.canManage(ctx)) return;
       room = ItoGame.applyRandomTheme(room);
@@ -688,14 +1262,34 @@ async function handleAction(action, data, ctx) {
       break;
 
     case "ito-reveal-number": {
+      const zone = document.getElementById("itoRevealFlipZone");
       const revealEl = document.getElementById("revealArea");
-      if (revealEl) revealEl.classList.remove("hidden");
+      const btn = document.querySelector(".ito-reveal-btn");
+      if (btn) btn.classList.add("hidden");
+      if (zone) zone.classList.add("is-flipped");
+      if (revealEl) {
+        const cardCount = zone ? zone.querySelectorAll(".ito-flip-card").length : 1;
+        const waitMs = 520 + Math.max(0, cardCount - 1) * 90;
+        setTimeout(function () {
+          revealEl.classList.remove("hidden");
+        }, waitMs);
+      }
       break;
     }
 
     case "ito-hide-number": {
-      const hideEl = document.getElementById("revealArea");
-      if (hideEl) hideEl.classList.add("hidden");
+      const zone = document.getElementById("itoRevealFlipZone");
+      const revealEl = document.getElementById("revealArea");
+      const btn = document.querySelector(".ito-reveal-btn");
+      if (revealEl) revealEl.classList.add("hidden");
+      if (zone) zone.classList.remove("is-flipped");
+      if (btn) {
+        const cardCount = zone ? zone.querySelectorAll(".ito-flip-card").length : 1;
+        const waitMs = 520 + Math.max(0, cardCount - 1) * 90;
+        setTimeout(function () {
+          btn.classList.remove("hidden");
+        }, waitMs);
+      }
       break;
     }
 
@@ -1556,6 +2150,10 @@ async function handleAction(action, data, ctx) {
       break;
 
     case "vttt-play": {
+      if (!VanishingTttGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const index = parseInt(data.index, 10);
       const result = VanishingTttGame.play(room, index);
       if (!result.ok) {
@@ -1574,6 +2172,10 @@ async function handleAction(action, data, ctx) {
       break;
 
     case "ttt-play": {
+      if (!TicTacToeGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const index = parseInt(data.index, 10);
       const result = TicTacToeGame.play(room, index);
       if (!result.ok) {
@@ -1592,6 +2194,10 @@ async function handleAction(action, data, ctx) {
       break;
 
     case "mttt-select-hand": {
+      if (!MatryoshkaTttGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const result = MatryoshkaTttGame.selectHand(room, data.size);
       if (!result.ok) {
         showToast(result.error || "選べません");
@@ -1603,6 +2209,10 @@ async function handleAction(action, data, ctx) {
     }
 
     case "mttt-cell": {
+      if (!MatryoshkaTttGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const row = parseInt(data.row, 10);
       const col = parseInt(data.col, 10);
       const result = MatryoshkaTttGame.handleCell(room, row, col);
@@ -1616,6 +2226,7 @@ async function handleAction(action, data, ctx) {
     }
 
     case "mttt-cancel":
+      if (!MatryoshkaTttGame.isMyTurn(ctx)) return;
       room = MatryoshkaTttGame.cancelSelect(room);
       await saveAndRender();
       break;

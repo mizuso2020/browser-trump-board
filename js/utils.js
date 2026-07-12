@@ -11,12 +11,29 @@ function generateRoomCode() {
   return code;
 }
 
+function getCookie(name) {
+  const match = document.cookie.match(new RegExp("(?:^|; )" + name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "=([^;]*)"));
+  return match ? decodeURIComponent(match[1]) : "";
+}
+
+function setCookie(name, value, days) {
+  const maxAge = Math.max(1, days) * 86400;
+  document.cookie = name + "=" + encodeURIComponent(value) + ";path=/;max-age=" + maxAge + ";SameSite=Lax";
+}
+
 function getStablePlayerId() {
-  let id = localStorage.getItem("partyGames_playerId");
+  let id = "";
+  try { id = localStorage.getItem("partyGames_playerId") || ""; } catch (e) { id = ""; }
+  if (!id) {
+    try { id = sessionStorage.getItem("partyGames_playerId") || ""; } catch (e) { id = ""; }
+  }
+  if (!id) id = getCookie("partyGames_playerId");
   if (!id || !/^[a-z0-9]{6,16}$/.test(id)) {
     id = generateId();
-    localStorage.setItem("partyGames_playerId", id);
   }
+  try { localStorage.setItem("partyGames_playerId", id); } catch (e) { /* ignore */ }
+  try { sessionStorage.setItem("partyGames_playerId", id); } catch (e) { /* ignore */ }
+  setCookie("partyGames_playerId", id, 365);
   return id;
 }
 
@@ -89,6 +106,25 @@ function copyText(text) {
   document.execCommand("copy");
   document.body.removeChild(ta);
   return Promise.resolve();
+}
+
+function rememberRoomSession(code, modeName, playerIdOpt) {
+  const pid = playerIdOpt || (typeof Sync !== "undefined" ? Sync.uid : "");
+  sessionStorage.setItem("partyGames_roomCode", String(code || "").toUpperCase());
+  sessionStorage.setItem("partyGames_roomMode", modeName || "room");
+  if (pid) sessionStorage.setItem("partyGames_roomPlayerId", pid);
+}
+
+function buildRoomUrl(code, modeName, options) {
+  options = options || {};
+  const params = new URLSearchParams();
+  params.set("code", String(code || "").toUpperCase());
+  params.set("mode", modeName || "room");
+  const pid = options.playerId || (typeof Sync !== "undefined" && Sync.uid ? Sync.uid : "") || getQueryParam("player");
+  if (pid && /^[a-z0-9]{6,16}$/.test(pid)) params.set("player", pid);
+  const game = options.game || getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame");
+  if (game) params.set("game", game);
+  return "room.html?" + params.toString();
 }
 
 function savePlayerName(name) {

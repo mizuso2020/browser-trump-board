@@ -18,6 +18,22 @@ STATS_BOOT_WEB_PATH = os.environ.get(
 )
 CODE_RE = re.compile(r"^[A-Z0-9]{4}$")
 PLAYER_RE = re.compile(r"^[a-z0-9]{6,16}$")
+GAME_MAX_PLAYERS = {
+    "werewolf": 13,
+    "wordwolf": 12,
+    "ito": 8,
+    "tic_tac_toe": 2,
+    "vanishing_ttt": 2,
+    "matryoshka_ttt": 2,
+    "reversi": 2,
+    "gomoku": 2,
+    "shogi": 2,
+}
+
+
+def room_max_players(public):
+    game_id = public.get("pendingGame") or public.get("game")
+    return GAME_MAX_PLAYERS.get(game_id, 16)
 
 
 def ensure_dirs():
@@ -83,6 +99,30 @@ def should_count_new_play(old_public, new_public):
     return old_phase == "lobby" and new_phase != "lobby"
 
 
+def is_game_started(public):
+    if not isinstance(public, dict):
+        return False
+    phase = public.get("phase") or "lobby"
+    return phase != "lobby" or bool(public.get("game"))
+
+
+def reject_public_put(old_public, public):
+    """Return error code string if PUT must be rejected, else None."""
+    if not isinstance(public, dict):
+        return "invalid public"
+    if not isinstance(old_public, dict):
+        return None
+    if not is_game_started(old_public):
+        return None
+    incoming_at = int(public.get("updatedAt") or 0)
+    old_at = int(old_public.get("updatedAt") or 0)
+    if incoming_at and old_at and incoming_at < old_at:
+        return "stale"
+    if not is_game_started(public):
+        return "started"
+    return None
+
+
 def increment_play_count():
     stats = read_stats()
     stats["playCount"] = int(stats.get("playCount", 0)) + 1
@@ -91,11 +131,37 @@ def increment_play_count():
     return stats["playCount"]
 
 
+def merge_players(old_players, new_players):
+    """Keep everyone who already joined; host saves can lag behind the server."""
+    old_players = old_players if isinstance(old_players, list) else []
+    new_players = new_players if isinstance(new_players, list) else []
+    by_id = {}
+    for p in old_players:
+        if isinstance(p, dict) and p.get("id"):
+            by_id[p["id"]] = dict(p)
+    for p in new_players:
+        if isinstance(p, dict) and p.get("id"):
+            merged = dict(by_id.get(p["id"], {}))
+            merged.update(p)
+            by_id[p["id"]] = merged
+    ordered = []
+    seen = set()
+    for p in old_players + new_players:
+        pid = p.get("id") if isinstance(p, dict) else None
+        if not pid or pid in seen or pid not in by_id:
+            continue
+        ordered.append(by_id[pid])
+        seen.add(pid)
+    return ordered
+
+
 def json_response(handler, status, payload):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
+    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+    handler.send_header("Pragma", "no-cache")
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
     handler.send_header("Access-Control-Allow-Headers", "Content-Type")
@@ -193,8 +259,17 @@ class RoomHandler(BaseHTTPRequestHandler):
                 return json_response(self, 400, {"error": "invalid public"})
             public_path = os.path.join(room_path(code), "public.json")
             old_public = read_json(public_path)
+            reject = reject_public_put(old_public, public)
+            if reject:
+                return json_response(self, 409, {"error": reject})
             if should_count_new_play(old_public, public):
                 increment_play_count()
+                public["gameStartedAt"] = int(time.time() * 1000)
+            elif isinstance(old_public, dict) and old_public.get("gameStartedAt"):
+                public["gameStartedAt"] = old_public["gameStartedAt"]
+            if isinstance(public.get("players"), list):
+                old_players = old_public.get("players") if isinstance(old_public, dict) else []
+                public["players"] = merge_players(old_players, public["players"])
             public["updatedAt"] = int(time.time() * 1000)
             write_json(public_path, public)
             if "hostSecrets" in body and body["hostSecrets"] is not None:
@@ -259,11 +334,33 @@ class RoomHandler(BaseHTTPRequestHandler):
                 return json_response(self, 400, {"error": "invalid player"})
             players = public.get("players") or []
             if not any(p.get("id") == player_id for p in players):
+                max_players = room_max_players(public)
+                if len(players) >= max_players:
+                    return json_response(self, 409, {"error": "full"})
                 players.append({"id": player_id, "name": name, "isHost": False})
                 public["players"] = players
                 public["updatedAt"] = int(time.time() * 1000)
                 write_json(public_path, public)
             return json_response(self, 200, public)
+
+        if len(parts) == 3 and parts[0] == "room" and parts[2] == "resolve-player":
+            code = parts[1].upper()
+            if not CODE_RE.match(code):
+                return json_response(self, 400, {"error": "invalid code"})
+            public_path = os.path.join(room_path(code), "public.json")
+            public = read_json(public_path)
+            if not public:
+                return json_response(self, 404, {"error": "not found"})
+            player_id = body.get("playerId", "")
+            name = (body.get("name") or "").strip()
+            players = public.get("players") or []
+            if PLAYER_RE.match(player_id) and any(p.get("id") == player_id for p in players):
+                return json_response(self, 200, {"playerId": player_id})
+            if name:
+                matches = [p for p in players if isinstance(p, dict) and p.get("name") == name]
+                if matches:
+                    return json_response(self, 200, {"playerId": matches[0]["id"]})
+            return json_response(self, 404, {"error": "not in room"})
 
         if len(parts) == 2 and parts[0] == "stats" and parts[1] == "plays":
             count = increment_play_count()

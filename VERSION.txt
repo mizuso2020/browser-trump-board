@@ -1,0 +1,66 @@
+ブラウザ・トランプ＆ボード
+
+Version 1.0.0（確定版・固定）
+
+
+
+このフォルダ一式が Version 1 の保存用ファイルです。
+
+2026-07-12 をもって V1 は固定。以降の開発は Version 2 で行います。
+
+
+
+■ 遊べるゲーム（9タイトル）
+
+人狼 / ワードウルフ / イト / オセロ / 五目並べ / 将棋
+
+ノーマル○× / 消える○× / マトリョーシカ○×
+
+
+
+■ 遊び方
+
+スマホ1台を回すモードのみ
+
+
+
+■ 起動方法
+
+1. ZIPを「すべて展開」する
+
+2. 「アプリを開く.bat」をダブルクリック
+
+3. 黒い画面は閉じない
+
+4. http://localhost:29500/ が開く
+
+
+
+■ 保存・ダウンロード
+
+GitHub: https://github.com/mizuso2020/browser-trump-board/releases/tag/v1.0.0
+
+ZIP:    https://github.com/mizuso2020/browser-trump-board/releases/download/v1.0.0/browser-trump-board-v1.0.0.zip
+
+
+
+■ EC2デモ（随時更新される・V1とは別）
+
+http://54.65.228.227/games/
+
+
+
+■ Version 2 の予定
+
+- 独自ドメイン取得
+
+- 各自のスマホで遊べる本格マルチプレイ
+
+- Firebase / ルームAPI の本番化
+
+
+
+更新履歴の詳細: CHANGELOG.md
+
+作成日: 2026-07-12
+

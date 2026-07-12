@@ -55,7 +55,7 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 3,
-    modesSoon: ["room", "online"],
+    modesSoon: ["online"],
     module: "WerewolfGame"
   },
   /* --- 協力・ワード（対応済み） --- */
@@ -78,7 +78,7 @@ const GAME_REGISTRY = {
     minPlayers: 2,
     maxPlayers: 8,
     status: "live",
-    featured: true,
+    playCaution: "バグあるかも",
     modesSoon: ["room", "online"],
     module: "ItoGame"
   },
@@ -338,7 +338,7 @@ const GAME_REGISTRY = {
     status: "live",
     featured: true,
     instantLocal: true,
-    modesSoon: ["room", "online"],
+    modesSoon: ["online"],
     module: "VanishingTttGame"
   },
   tic_tac_toe: {
@@ -352,7 +352,7 @@ const GAME_REGISTRY = {
     status: "live",
     featured: true,
     instantLocal: true,
-    modesSoon: ["room", "online"],
+    modesSoon: ["online"],
     module: "TicTacToeGame"
   },
   matryoshka_ttt: {
@@ -366,7 +366,7 @@ const GAME_REGISTRY = {
     status: "live",
     featured: true,
     instantLocal: true,
-    modesSoon: ["room", "online"],
+    modesSoon: ["online"],
     module: "MatryoshkaTttGame"
   },
   chinchiro: {

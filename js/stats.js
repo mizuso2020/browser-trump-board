@@ -44,17 +44,23 @@ const PlayStats = {
   },
 
   fetchCount: async function () {
-    try {
-      const res = await fetch(this.apiBase() + "/stats/plays?t=" + Date.now(), {
-        cache: "no-store"
-      });
-      if (!res.ok) return null;
-      const data = await res.json();
-      const count = Number(data.playCount);
-      return Number.isFinite(count) ? count : null;
-    } catch (err) {
-      return null;
+    const urls = [this.apiBase() + "/stats/plays?t=" + Date.now()];
+    if (window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1") {
+      urls.push("https://browser-trump-board.com/games/api/stats/plays?t=" + Date.now());
     }
+
+    for (let i = 0; i < urls.length; i++) {
+      try {
+        const res = await fetch(urls[i], { cache: "no-store" });
+        if (!res.ok) continue;
+        const data = await res.json();
+        const count = Number(data.playCount);
+        if (Number.isFinite(count)) return count;
+      } catch (err) {
+        /* try next */
+      }
+    }
+    return null;
   },
 
   beaconIncrement: function () {

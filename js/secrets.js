@@ -24,6 +24,9 @@ const Secrets = {
     }
 
     if (gs.roles) {
+      if (copy.phase === "wolf_end") {
+        gs.revealedRoles = Object.assign({}, gs.roles);
+      }
       hostSecrets.roles = gs.roles;
       const wolves = copy.players.filter(function (p) { return gs.roles[p.id] === "wolf"; });
       Object.keys(gs.roles).forEach(function (pid) {
