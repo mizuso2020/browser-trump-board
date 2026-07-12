@@ -24,7 +24,7 @@ const Secrets = {
     }
 
     if (gs.roles) {
-      if (copy.phase === "wolf_end") {
+      if (copy.phase === "wolf_end" || copy.phase === "wordwolf_end") {
         gs.revealedRoles = Object.assign({}, gs.roles);
       }
       hostSecrets.roles = gs.roles;
@@ -42,7 +42,8 @@ const Secrets = {
     }
 
     if (gs.hands) {
-      if (copy.game !== "oldmaid" && copy.game !== "sevens") {
+      // matryoshka_ttt: hands are keyed by owner (1/2), not player id — keep on public state
+      if (copy.game !== "oldmaid" && copy.game !== "sevens" && copy.game !== "matryoshka_ttt") {
         hostSecrets.hands = gs.hands;
         Object.keys(gs.hands).forEach(function (pid) {
           playerSecrets[pid] = playerSecrets[pid] || {};
@@ -53,6 +54,9 @@ const Secrets = {
     }
 
     if (gs.words) {
+      if (copy.phase === "wordwolf_end") {
+        gs.revealedWords = Object.assign({}, gs.words);
+      }
       hostSecrets.words = gs.words;
       Object.keys(gs.words).forEach(function (pid) {
         playerSecrets[pid] = playerSecrets[pid] || {};

@@ -276,7 +276,8 @@ const WordWolfGame = {
       winner: null,
       executed: null,
       wolfGuess: null,
-      discussionEndsAt: null
+      discussionEndsAt: null,
+      proceedReady: {}
     };
 
     if (room.mode === "online" || room.mode === "room") {
@@ -318,6 +319,7 @@ const WordWolfGame = {
 
   startDiscussion: function (room) {
     room.gameState.discussionEndsAt = Date.now() + this.DISCUSSION_MS;
+    room.gameState.proceedReady = {};
     room.phase = "wordwolf_discuss";
     return room;
   },
@@ -361,6 +363,65 @@ const WordWolfGame = {
     return room.players.every(function (p) {
       return room.gameState.votes[p.id];
     });
+  },
+
+  countVotesCast: function (room) {
+    const gs = room.gameState;
+    return room.players.filter(function (p) { return gs.votes[p.id]; }).length;
+  },
+
+  hasVoteMajority: function (room) {
+    const total = room.players.length;
+    if (!total) return false;
+    return this.countVotesCast(room) > total / 2;
+  },
+
+  canResolveVote: function (room) {
+    return this.allVoted(room) || this.hasVoteMajority(room);
+  },
+
+  countProceedReady: function (room) {
+    const ready = room.gameState.proceedReady || {};
+    return room.players.filter(function (p) { return ready[p.id]; }).length;
+  },
+
+  hasProceedMajority: function (room) {
+    const total = room.players.length;
+    if (!total) return false;
+    return this.countProceedReady(room) > total / 2;
+  },
+
+  markProceedReady: function (room, playerId) {
+    const gs = room.gameState;
+    if (!gs.proceedReady) gs.proceedReady = {};
+    gs.proceedReady[playerId] = true;
+    return room;
+  },
+
+  renderProceedReadyPanel: function (room, me, action) {
+    const gs = room.gameState;
+    const ready = gs.proceedReady || {};
+    const total = room.players.length;
+    const count = this.countProceedReady(room);
+    const majority = Math.floor(total / 2) + 1;
+    const html = [];
+
+    html.push('<section class="card"><h2>投票に進む</h2>');
+    html.push('<p class="note">残り時間を待たず、過半数（' + majority + '人）が賛成すると投票に進みます。</p>');
+    html.push('<ul class="player-list">');
+    room.players.forEach(function (p) {
+      html.push('<li>' + escapeHtml(p.name) + (ready[p.id] ? ' ✓' : '') + '</li>');
+    });
+    html.push('</ul>');
+    html.push('<p class="note">' + count + '/' + total + '人が賛成</p>');
+
+    if (!ready[me.id]) {
+      html.push('<button type="button" class="btn btn-secondary btn-block" data-action="' + action + '">投票に進みたい</button>');
+    } else {
+      html.push('<p class="note">あなたは投票に進みたいに賛成済みです</p>');
+    }
+    html.push('</section>');
+    return html.join("");
   },
 
   normalizeGuess: function (text) {
@@ -423,6 +484,28 @@ const WordWolfGame = {
 
   canManage: function (ctx) {
     return ctx.isHost || ctx.room.mode === "local";
+  },
+
+  isRemoteRoom: function (room) {
+    return room.mode === "room" || room.mode === "online";
+  },
+
+  getRolesMap: function (ctx) {
+    const gs = ctx.room.gameState;
+    if (!ctx.isOnline) return gs && gs.roles ? gs.roles : {};
+    if (gs && gs.revealedRoles) return gs.revealedRoles;
+    if (ctx.hostSecrets && ctx.hostSecrets.roles) return ctx.hostSecrets.roles;
+    if (gs && gs.roles) return gs.roles;
+    return {};
+  },
+
+  getWordsMap: function (ctx) {
+    const gs = ctx.room.gameState;
+    if (!ctx.isOnline) return gs && gs.words ? gs.words : {};
+    if (gs && gs.revealedWords) return gs.revealedWords;
+    if (ctx.hostSecrets && ctx.hostSecrets.words) return ctx.hostSecrets.words;
+    if (gs && gs.words) return gs.words;
+    return {};
   },
 
   renderLobbySetup: function (room, canManage) {
@@ -553,7 +636,7 @@ const WordWolfGame = {
     const canManage = this.canManage(ctx);
 
     if (room.phase === "wordwolf_ready") {
-      html.push('<div class="phase-banner"><h2>お題確認</h2><p>自分のお題だけを確認してください</p></div>');
+      html.push('<div class="phase-banner"><h2>お題確認</h2><p>' + (this.isRemoteRoom(room) ? "自分のスマホでお題だけを確認してください" : "自分のお題だけを確認してください") + '</p></div>');
       html.push('<section class="card secret-panel">');
       html.push('<button type="button" class="btn btn-primary" data-action="ww-show-word">お題を見る</button>');
       html.push(this.renderWordReveal(myWord));
@@ -564,6 +647,9 @@ const WordWolfGame = {
         html.push('<p class="note" style="margin-top:1rem">確認済み ✓</p>');
       }
       html.push('</section>');
+
+      const confirmedCount = room.players.filter(function (p) { return gs.wordConfirmed[p.id]; }).length;
+      html.push('<p class="note" style="text-align:center">確認済み ' + confirmedCount + ' / ' + room.players.length + '人</p>');
 
       if (canManage) {
         const allDone = this.allWordsConfirmed(room);
@@ -588,7 +674,7 @@ const WordWolfGame = {
     }
 
     if (room.phase === "wordwolf_discuss") {
-      html.push('<div class="phase-banner"><h2>話し合い</h2><p>お題について自由に会話してください（3分）</p></div>');
+      html.push('<div class="phase-banner"><h2>話し合い</h2><p>' + (this.isRemoteRoom(room) ? "みんなで自由に話し合ってください（3分）" : "お題について自由に会話してください（3分）") + '</p></div>');
       if (gs.themeName) {
         html.push('<p class="note" style="text-align:center;margin:-0.5rem 0 1rem">' + escapeHtml(gs.themeName) + ' · ウルフ ' + gs.wolfCount + '人</p>');
       }
@@ -599,10 +685,15 @@ const WordWolfGame = {
       });
       html.push('</ul></section>');
 
+      if (me) {
+        html.push(this.renderProceedReadyPanel(room, me, "ww-proceed-ready"));
+      }
+
       if (canManage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ww-start-vote">投票へ進む</button>');
+        html.push('<p class="note">ホストはいつでも投票へ進めます（残り時間を待つ必要はありません）</p>');
       } else {
-        html.push('<p class="note">投票へ進むのを待っています…</p>');
+        html.push('<p class="note">過半数が賛成するか、ホストが投票へ進むのを待っています…</p>');
       }
       return html.join("");
     }
@@ -633,15 +724,23 @@ const WordWolfGame = {
       });
       html.push('</ul></section>');
 
-      if (canManage && this.allVoted(room)) {
+      if (canManage && this.canResolveVote(room)) {
         html.push('<button type="button" class="btn btn-danger" data-action="ww-resolve-vote">投票を集計</button>');
+        if (!this.allVoted(room)) {
+          html.push('<p class="note">過半数の投票が揃いました。未投票の人がいても集計できます。</p>');
+        }
+      } else if (canManage) {
+        const voted = this.countVotesCast(room);
+        const total = room.players.length;
+        const majority = Math.floor(total / 2) + 1;
+        html.push('<p class="note">投票済み ' + voted + '/' + total + '人（過半数 ' + majority + '人で集計可能）</p>');
       }
       return html.join("");
     }
 
     if (room.phase === "wordwolf_wolf_guess") {
       const executed = room.players.find(function (p) { return p.id === gs.executed; });
-      const roles = ctx.hostSecrets ? ctx.hostSecrets.roles : gs.roles;
+      const roles = this.getRolesMap(ctx);
       const isExecutedWolf = executed && roles[executed.id] === "wolf";
       const canGuess = executed && (
         (!ctx.isOnline && room.mode === "local") ||
@@ -680,7 +779,8 @@ const WordWolfGame = {
     }
 
     if (room.phase === "wordwolf_end") {
-      const roles = ctx.hostSecrets ? ctx.hostSecrets.roles : gs.roles;
+      const roles = this.getRolesMap(ctx);
+      const words = this.getWordsMap(ctx);
       let winText = "ウルフの勝利！🐺";
       if (gs.winner === "citizens" || gs.winner === "citizens_pending") {
         winText = "市民の勝利！🎉";
@@ -708,14 +808,13 @@ const WordWolfGame = {
 
       html.push('<section class="card"><h2>役職・お題一覧</h2><ul class="player-list">');
       room.players.forEach(function (p) {
-        const word = ctx.hostSecrets && ctx.hostSecrets.words ? ctx.hostSecrets.words[p.id] : gs.words[p.id];
-        html.push('<li><span>' + escapeHtml(p.name) + ' — ' + escapeHtml(word) + '</span><span>' + escapeHtml(WordWolfGame.roleNames[roles[p.id]] || "？") + '</span></li>');
+        const word = words[p.id];
+        html.push('<li><span>' + escapeHtml(p.name) + ' — ' + escapeHtml(word || "？") + '</span><span>' + escapeHtml(WordWolfGame.roleNames[roles[p.id]] || "？") + '</span></li>');
       });
       html.push('</ul></section>');
 
       if (canManage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ww-restart">もう一局</button>');
-        html.push('<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>');
       }
       return html.join("");
     }

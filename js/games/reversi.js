@@ -280,7 +280,6 @@ const ReversiGame = {
       html += '<p class="reversi-result">' + result + "（黒 " + score.black + " － 白 " + score.white + "）</p>";
       if (ctx.isHost) {
         html += '<button type="button" class="btn btn-primary" data-action="reversi-restart">もう一局</button>';
-        html += '<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>';
       }
     }
 

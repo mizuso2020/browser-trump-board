@@ -803,6 +803,8 @@ const Sync = {
     const payload = JSON.parse(JSON.stringify(room));
 
     delete payload._creatorName;
+    delete payload._syncedGameState;
+    delete payload._syncedAt;
 
     payload.mode = room.mode || "online";
 

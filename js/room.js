@@ -265,6 +265,7 @@ async function boot() {
       await pullRoomFromServer();
     }
     await tryAutoStartPreferredGame();
+    markRoomSyncedSnapshot(room);
     render();
   } catch (err) {
     showFatal(err.message || "接続に失敗しました");
@@ -284,7 +285,8 @@ async function loadSecretsWithRetry() {
   await loadSecrets();
   if (!room || !room.game) return;
   const needsRole = room.game === "werewolf" && room.phase === "wolf_ready";
-  if (needsRole && (!playerSecret || !playerSecret.role)) {
+  const needsWordwolfSecret = room.game === "wordwolf" && room.phase === "wordwolf_ready";
+  if ((needsRole || needsWordwolfSecret) && (!playerSecret || (needsRole && !playerSecret.role) || (needsWordwolfSecret && !playerSecret.word))) {
     await new Promise(function (resolve) { setTimeout(resolve, 600); });
     await loadSecrets();
   }
@@ -293,6 +295,64 @@ async function loadSecretsWithRetry() {
 function roomUpdatedAt(value) {
   const n = Number(value);
   return isFinite(n) ? n : 0;
+}
+
+function roomPublicSnapshot(targetRoom) {
+  if (!targetRoom) return "";
+  const copy = JSON.parse(JSON.stringify(targetRoom));
+  delete copy._syncedGameState;
+  delete copy._syncedAt;
+  delete copy._creatorName;
+  return JSON.stringify(copy);
+}
+
+function roomsAreEquivalent(a, b) {
+  return roomPublicSnapshot(a) === roomPublicSnapshot(b);
+}
+
+function isStaleSaveError(err) {
+  return !!(err && err.message && err.message.indexOf("保存が古くなりました") >= 0);
+}
+
+function markRoomSyncedSnapshot(targetRoom) {
+  if (!targetRoom) return;
+  targetRoom._syncedGameState = JSON.stringify(targetRoom.gameState || null);
+  targetRoom._syncedAt = roomUpdatedAt(targetRoom.updatedAt);
+}
+
+async function prepareOnlineSave() {
+  if (!Sync.isOnline()) return true;
+
+  let fresh;
+  try {
+    fresh = await Sync.load(roomCode);
+  } catch (e) {
+    return true;
+  }
+  if (!fresh || !fresh.code) return true;
+
+  room.updatedAt = roomUpdatedAt(fresh.updatedAt);
+
+  if (!room.game || room.phase === "lobby") {
+    return true;
+  }
+
+    const freshGs = JSON.stringify(fresh.gameState || null);
+    const localGs = JSON.stringify(room.gameState || null);
+
+    if (freshGs === localGs) {
+      room.updatedAt = roomUpdatedAt(fresh.updatedAt);
+      markRoomSyncedSnapshot(room);
+      return false;
+    }
+
+  const baseGs = room._syncedGameState;
+  if (baseGs && freshGs !== baseGs) {
+    await syncRoomFromServer(fresh);
+    return false;
+  }
+
+  return true;
 }
 
 function isServerGameStarted(latest) {
@@ -345,6 +405,7 @@ function hardRecoverToRoom(latest) {
 
 function shouldApplyServerRoom(latest) {
   if (!latest || !latest.code || !Array.isArray(latest.players)) return false;
+  if (latest.phase === "lobby" && !latest.game && room && room.game) return true;
   if (isLocalStuckInLobby(latest)) return true;
   if (isServerGameStarted(latest) && isLocalInLobby()) return true;
   const serverAt = roomUpdatedAt(latest.gameStartedAt);
@@ -466,6 +527,7 @@ async function onRoomUpdate(latest) {
   }
   lastServerPhase = latest.phase || "lobby";
   lastServerGame = latest.game || null;
+  if (room && roomsAreEquivalent(room, latest)) return;
   await finishRoomSync(latest);
 }
 
@@ -477,8 +539,19 @@ async function syncRoomFromServer(latest) {
 
   const prevGame = room && room.game;
   const prevPhase = room && room.phase;
+  const prevMatryoshkaTurn = room && room.game === "matryoshka_ttt" && room.gameState ? room.gameState.turn : null;
+  const prevMatryoshkaBoard = room && room.game === "matryoshka_ttt" && room.gameState ? JSON.stringify(room.gameState.board) : null;
 
   room = JSON.parse(JSON.stringify(latest));
+  markRoomSyncedSnapshot(room);
+
+  if (room.game === "matryoshka_ttt" && room.gameState) {
+    const boardChanged = prevMatryoshkaBoard && JSON.stringify(room.gameState.board) !== prevMatryoshkaBoard;
+    const turnChanged = prevMatryoshkaTurn !== null && room.gameState.turn !== prevMatryoshkaTurn;
+    if (boardChanged || turnChanged) {
+      MatryoshkaTttGame.clearLocalSelection();
+    }
+  }
 
   if (room.game === "werewolf" && room.gameState) {
     WerewolfGame.normalizePhase(room);
@@ -510,9 +583,7 @@ async function applyRoomUpdate(latest) {
   const majorChange = prevGame !== latest.game || prevPhase !== latest.phase;
 
   if (!majorChange) {
-    const prev = JSON.stringify(room);
-    const next = JSON.stringify(latest);
-    if (prev === next) return;
+    if (roomsAreEquivalent(room, latest)) return;
   }
 
   await syncRoomFromServer(latest);
@@ -585,14 +656,39 @@ async function saveAndRender(secretBundle) {
   roomActionLock = true;
   let boardAnim = null;
   try {
-    room.updatedAt = Date.now();
-
     if ((room.game === "reversi" || room.game === "gomoku" || room.game === "vanishing_ttt" || room.game === "tic_tac_toe") && room.gameState && room.gameState.lastMove) {
       boardAnim = room.gameState.lastMove;
       delete room.gameState.lastMove;
     }
 
-    await Sync.save(room, secretBundle);
+    const shouldSave = await prepareOnlineSave();
+    if (!shouldSave) return;
+
+    let saved = false;
+    for (let attempt = 0; attempt < 3 && !saved; attempt++) {
+      room.updatedAt = Date.now();
+      try {
+        await Sync.save(room, secretBundle);
+        saved = true;
+      } catch (err) {
+        if (!isStaleSaveError(err) || attempt >= 2) throw err;
+        const fresh = await Sync.load(roomCode);
+        if (!fresh || !fresh.code) throw err;
+        const freshGs = JSON.stringify(fresh.gameState || null);
+        const localGs = JSON.stringify(room.gameState || null);
+        if (freshGs === localGs) {
+          room.updatedAt = roomUpdatedAt(fresh.updatedAt);
+          saved = true;
+          break;
+        }
+        const baseGs = room._syncedGameState;
+        if (baseGs && freshGs !== baseGs) {
+          await syncRoomFromServer(fresh);
+          return;
+        }
+        room.updatedAt = roomUpdatedAt(fresh.updatedAt);
+      }
+    }
 
     if (secretBundle) {
       playerSecret = secretBundle.playerSecrets[playerId] || playerSecret;
@@ -603,6 +699,7 @@ async function saveAndRender(secretBundle) {
       room.gameState.lastMove = boardAnim;
     }
 
+    markRoomSyncedSnapshot(room);
     render();
 
     if (boardAnim) {
@@ -808,12 +905,20 @@ function renderLobbyCodeCard(code) {
   );
 }
 
+let lastRenderedLobbyQrUrl = "";
+
 function renderLobbyQr(room) {
   const wrap = document.getElementById("lobbyQrCode");
   if (!wrap) return;
   const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.pendingGame || room.game || "werewolf";
   const mode = room.mode === "online" ? "online" : "room";
   const joinUrl = RoomQr.buildJoinUrl(room.code, { game: game, mode: mode });
+  const hasQr = wrap.querySelector("canvas, img, .lobby-qr-canvas");
+  if (joinUrl === lastRenderedLobbyQrUrl && hasQr) {
+    RoomQr.bindJoinLink(joinUrl);
+    return;
+  }
+  lastRenderedLobbyQrUrl = joinUrl;
   RoomQr.render(wrap, joinUrl);
   RoomQr.bindJoinLink(joinUrl);
 }
@@ -862,31 +967,17 @@ function getPlayableGamesForRoom(targetRoom, options) {
 
 function renderEndGameNav(ctx) {
   const html = [];
-  const count = ctx.room.players.length;
-  const games = getPlayableGamesForRoom(ctx.room, { excludeCurrent: true });
 
   html.push('<section class="card end-game-nav">');
   html.push("<h2>次にやること</h2>");
-  html.push('<a href="index.html" class="btn btn-secondary btn-block">トップへ</a>');
 
   if (ctx.isHost) {
-    html.push('<p class="note" style="margin-top:1rem">この人数（' + count + "人）で遊べるゲーム</p>");
-    if (!games.length) {
-      html.push('<p class="note">いまの人数で他に遊べるゲームはありません</p>');
-    } else {
-      html.push('<div class="lobby-game-list end-game-list">');
-      games.forEach(function (meta) {
-        html.push('<button type="button" class="btn btn-primary btn-block" data-action="start-game" data-game="' + meta.id + '">');
-        html.push(escapeHtml(meta.name) + "（" + meta.minPlayers + "〜" + meta.maxPlayers + "人）");
-        html.push("</button>");
-      });
-      html.push("</div>");
-    }
-    html.push('<button type="button" class="btn btn-secondary btn-block" data-action="back-lobby" style="margin-top:0.75rem">ロビーに戻る</button>');
+    html.push('<button type="button" class="btn btn-primary btn-block" data-action="back-lobby">ロビーに戻る</button>');
   } else {
-    html.push('<p class="note" style="margin-top:1rem">ほかのゲームはホストが選べます</p>');
+    html.push('<p class="note">ホストがロビーに戻ると、自動でロビー画面に切り替わります</p>');
   }
 
+  html.push('<a href="index.html" class="btn btn-secondary btn-block" style="margin-top:0.75rem">トップに戻る</a>');
   html.push("</section>");
   return html.join("");
 }
@@ -962,9 +1053,11 @@ function renderLobby(ctx) {
     const prefOk = ctx.room.players.length >= prefMeta.minPlayers && ctx.room.players.length <= prefMeta.maxPlayers;
 
     html.push('<p class="note lobby-game-label">🎯 <strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
-    html.push(WordWolfGame.renderLobbySetup(ctx.room, ctx.isHost || ctx.room.mode === "local"));
+    html.push(WordWolfGame.renderLobbySetup(ctx.room, ctx.isHost));
 
-    if (ctx.isHost || ctx.room.mode === "local") {
+    if (!ctx.isHost && ctx.room.mode !== "local") {
+      html.push('<p class="note lobby-wait-hint">ゲームが始まると自動で画面が切り替わります</p>');
+    } else if (ctx.isHost || ctx.room.mode === "local") {
       html.push('<section class="card lobby-start-card">');
       html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="wordwolf" ' + (!prefOk ? "disabled" : "") + '>');
       html.push('ワードウルフを始める（' + ctx.room.players.length + '人）');
@@ -1058,6 +1151,10 @@ function bindEvents(ctx) {
     el.addEventListener("click", function () {
       handleAction(el.dataset.action, el.dataset, ctx).catch(function (err) {
         console.error(err);
+        if (isStaleSaveError(err)) {
+          forceRoomSync();
+          return;
+        }
         showToast(err && err.message ? err.message : "操作に失敗しました");
       });
     });
@@ -1109,6 +1206,7 @@ async function handleAction(action, data, ctx) {
       try {
         const savedLobbyWerewolf = room.lobbyWerewolf ? JSON.parse(JSON.stringify(room.lobbyWerewolf)) : null;
         const savedLobbyIto = room.lobbyIto ? JSON.parse(JSON.stringify(room.lobbyIto)) : null;
+        const savedLobbyWordwolf = room.lobbyWordwolf ? JSON.parse(JSON.stringify(room.lobbyWordwolf)) : null;
 
         if (Sync.isOnline()) {
           const fresh = await Sync.load(room.code);
@@ -1116,6 +1214,7 @@ async function handleAction(action, data, ctx) {
             room = fresh;
             if (savedLobbyWerewolf) room.lobbyWerewolf = savedLobbyWerewolf;
             if (savedLobbyIto) room.lobbyIto = savedLobbyIto;
+            if (savedLobbyWordwolf) room.lobbyWordwolf = savedLobbyWordwolf;
           }
         }
 
@@ -1187,10 +1286,14 @@ async function handleAction(action, data, ctx) {
 
     case "back-lobby":
       if (!ctx.isHost) return;
+      if (room.game === "matryoshka_ttt") MatryoshkaTttGame.clearLocalSelection();
+      const lobbyPendingGame = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.pendingGame || room.game;
       room.game = null;
       room.phase = "lobby";
       room.gameState = null;
+      if (lobbyPendingGame) room.pendingGame = lobbyPendingGame;
       if (room.gameStartedAt) delete room.gameStartedAt;
+      sessionStorage.removeItem("partyGames_knownGameStartedAt");
       await saveAndRender();
       break;
 
@@ -1538,6 +1641,17 @@ async function handleAction(action, data, ctx) {
       await saveAndRender();
       break;
 
+    case "wolf-proceed-ready":
+      if (!ctx.me || !ctx.me.id) return;
+      if (room.phase !== "wolf_day") return;
+      if (room.gameState.proceedReady && room.gameState.proceedReady[ctx.me.id]) return;
+      room = WerewolfGame.markProceedReady(room, ctx.me.id);
+      if (WerewolfGame.hasProceedMajority(room)) {
+        room = WerewolfGame.startVoting(room);
+      }
+      await saveAndRender();
+      break;
+
     case "wolf-vote":
       if (!data.player) {
         showToast("投票先を選んでください");
@@ -1576,6 +1690,10 @@ async function handleAction(action, data, ctx) {
 
     case "wolf-resolve-vote":
       if (!WerewolfGame.canManage(ctx)) return;
+      if (!WerewolfGame.canResolveVote(room)) {
+        showToast("過半数の投票が揃うまで待ってください");
+        return;
+      }
       room = WerewolfGame.resolveVote(room, getRolesMap(ctx));
       if (!room.gameState.lastExecuted && room.phase === "wolf_after_vote") {
         showToast("同票のため処刑なし");
@@ -1819,6 +1937,17 @@ async function handleAction(action, data, ctx) {
       await saveAndRender();
       break;
 
+    case "ww-proceed-ready":
+      if (!ctx.me || !ctx.me.id) return;
+      if (room.phase !== "wordwolf_discuss") return;
+      if (room.gameState.proceedReady && room.gameState.proceedReady[ctx.me.id]) return;
+      room = WordWolfGame.markProceedReady(room, ctx.me.id);
+      if (WordWolfGame.hasProceedMajority(room)) {
+        room = WordWolfGame.startVote(room);
+      }
+      await saveAndRender();
+      break;
+
     case "ww-vote": {
       let voterId = ctx.me.id;
       if (room.mode === "local") {
@@ -1836,11 +1965,19 @@ async function handleAction(action, data, ctx) {
 
     case "ww-resolve-vote":
       if (!WordWolfGame.canManage(ctx)) return;
+      if (!WordWolfGame.canResolveVote(room)) {
+        showToast("過半数の投票が揃うまで待ってください");
+        return;
+      }
       room = WordWolfGame.resolveVote(room, getWordWolfRoles(ctx));
       await saveAndRender();
       break;
 
     case "ww-submit-guess": {
+      if (room.gameState.executed && room.gameState.executed !== ctx.me.id && Sync.isOnline()) {
+        showToast("ワードウルフ本人だけが回答できます");
+        return;
+      }
       const guessInput = document.getElementById("wwGuessInput");
       if (!guessInput || !guessInput.value.trim()) {
         showToast("市民のお題を入力してください");
@@ -2136,6 +2273,10 @@ async function handleAction(action, data, ctx) {
       break;
 
     case "gomoku-play": {
+      if (!GomokuGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const row = parseInt(data.row, 10);
       const col = parseInt(data.col, 10);
       const result = GomokuGame.play(room, row, col);
@@ -2209,7 +2350,7 @@ async function handleAction(action, data, ctx) {
         return;
       }
       room = result.room;
-      await saveAndRender();
+      render();
       break;
     }
 
@@ -2226,14 +2367,18 @@ async function handleAction(action, data, ctx) {
         return;
       }
       room = result.room;
-      await saveAndRender();
+      if (result.needsSave) {
+        await saveAndRender();
+      } else {
+        render();
+      }
       break;
     }
 
     case "mttt-cancel":
       if (!MatryoshkaTttGame.isMyTurn(ctx)) return;
       room = MatryoshkaTttGame.cancelSelect(room);
-      await saveAndRender();
+      render();
       break;
 
     case "mttt-restart":

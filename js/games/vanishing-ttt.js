@@ -234,7 +234,6 @@ const VanishingTttGame = {
       html += '<p class="vttt-result">' + result + "</p>";
       if (ctx.isHost) {
         html += '<button type="button" class="btn btn-primary" data-action="vttt-restart">もう一局</button>';
-        html += '<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>';
       }
     }
 

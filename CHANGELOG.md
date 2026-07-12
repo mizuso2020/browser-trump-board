@@ -6,29 +6,76 @@
 
 # 2026-07-13 — 独自ドメイン取得・各自のスマホ対応開始
 
-## この日のまとめ
+## この日のまとめ（夜の追記）
 
 | 項目 | 内容 |
 |------|------|
-| **独自ドメイン** | **browser-trump-board.com** を取得し本番運用開始（Let's Encrypt / nginx） |
-| **各自のスマホ** | ルームコード・QR・参加リンクで **各人のスマホから参加・操作** できる基盤を本番投入 |
+| **投票フロー改善** | 話し合い中は過半数が「投票に進みたい」で即投票へ。投票中は過半数でホストが集計可能 |
+| **人狼4人対応** | 最低人数 5→4。基本構成は **人狼1・占い師1・村人2** |
+| **各自スマホ追加** | ワードウルフ・五目並べをルームモードで解禁 |
 | **本番URL** | https://browser-trump-board.com/games/ |
 
 ### 各自のスマホに対応したゲーム（現時点）
 
 | ゲーム | 人数 | ホスト用URL |
 |--------|------|-------------|
-| **人狼** | 5〜13人 | https://browser-trump-board.com/games/play.html?game=werewolf |
-| **ノーマル○×ゲーム** | 2人 | https://browser-trump-board.com/games/play.html?game=tic_tac_toe |
-| **消える○×** | 2人 | https://browser-trump-board.com/games/play.html?game=vanishing_ttt |
-| **マトリョーシカ○×** | 2人 | https://browser-trump-board.com/games/play.html?game=matryoshka_ttt |
-| **オセロ** | 2人 | https://browser-trump-board.com/games/play.html?game=reversi |
+| **人狼** | 4〜13人 | https://browser-trump-board.com/games/play.html?game=werewolf&mode=room |
+| **ワードウルフ** | 4〜12人 | https://browser-trump-board.com/games/play.html?game=wordwolf&mode=room |
+| **五目並べ** | 2人 | https://browser-trump-board.com/games/play.html?game=gomoku&mode=room |
+| **オセロ** | 2人 | https://browser-trump-board.com/games/play.html?game=reversi&mode=room |
+| **ノーマル○×ゲーム** | 2人 | https://browser-trump-board.com/games/play.html?game=tic_tac_toe&mode=room |
+| **消える○×** | 2人 | https://browser-trump-board.com/games/play.html?game=vanishing_ttt&mode=room |
+| **マトリョーシカ○×** | 2人 | https://browser-trump-board.com/games/play.html?game=matryoshka_ttt&mode=room |
 
-参加者共通: `play.html?game=＜ゲームID＞&mode=room&code=XXXX`
+参加者共通: `https://browser-trump-board.com/games/play.html?game=＜ゲームID＞&mode=room&code=XXXX`
 
-> **メモ:** 五目・将棋・ワードウルフなどは **まだ各自のスマホ未対応**（「準備中」または1台モードのみ）。順次追加予定。
+> **メモ:** 将棋などは **まだ各自のスマホ未対応**（1台モードのみ）。順次追加予定。
 
 ---
+
+## 投票フロー改善（人狼・ワードウルフ）
+
+| 項目 | 内容 |
+|------|------|
+| 話し合いフェーズ | 全員に「投票に進みたい」ボタン。過半数が賛成するとタイマー待ちなしで投票へ |
+| ホスト操作 | 「投票を始める」「投票へ進む」は残り時間を待たずいつでも押せる |
+| 投票フェーズ | 過半数が投票済みなら、ホストが未投票者を待たず「投票を集計」可能 |
+| 主な変更ファイル | `werewolf.js`, `wordwolf.js`, `room.js` |
+
+---
+
+## 人狼4人プレイ対応
+
+| 項目 | 内容 |
+|------|------|
+| 最低人数 | 5人 → **4人** |
+| 4人の基本構成 | 人狼1・占い師1・村人2 |
+| 主な変更ファイル | `werewolf.js`, `game-registry.js` |
+
+---
+
+## その他の修正（2026-07-13 夜）
+
+| 内容 | 主なファイル |
+|------|-------------|
+| ワードウルフを各自のスマホ（ルームモード）で解禁 | `wordwolf.js`, `secrets.js`, `game-registry.js` |
+| 五目並べを各自のスマホで解禁 | `gomoku.js`, `game-registry.js` |
+| マトリョーシカ○×の「始める」エラー修正（`hands` 秘密情報） | `secrets.js`, `matryoshka-ttt.js` |
+| 指すとき「保存が古くなりました」競合の修正 | `room.js` |
+| コマ選択が3回押さないと選べない問題の修正 | `matryoshka-ttt.js`, `room.js` |
+| ゲーム終了後ロビーに戻れない問題の修正 | `room_server.py`, `room.js` |
+| ロビー画面が1秒に2回ぶれる問題の修正 | `room.js`, `sync.js` |
+| 終了画面を「ロビーに戻る」「トップに戻る」のみに整理 | `room.js`, 各 `games/*.js` |
+
+---
+
+## この日のまとめ（午前〜昼）
+
+| 項目 | 内容 |
+|------|------|
+| **独自ドメイン** | **browser-trump-board.com** を取得し本番運用開始（Let's Encrypt / nginx） |
+| **各自のスマホ** | ルームコード・QR・参加リンクで **各人のスマホから参加・操作** できる基盤を本番投入 |
+| **本番URL** | https://browser-trump-board.com/games/ |
 
 ## 人狼ルームモード — 詳細・同期バグ修正
 

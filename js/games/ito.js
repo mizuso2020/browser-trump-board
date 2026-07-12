@@ -794,7 +794,6 @@ const ItoGame = {
       html.push('<p>ターン ' + gs.maxStages + ' までクリア</p></section>');
       if (manage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ito-restart">もう一度遊ぶ</button>');
-        html.push('<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>');
       }
       return html.join("");
     }
@@ -807,7 +806,6 @@ const ItoGame = {
       html.push('<p>お題：「' + escapeHtml(gs.theme || "—") + '」</p></section>');
       if (manage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ito-restart">もう一度遊ぶ</button>');
-        html.push('<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>');
       }
       return html.join("");
     }

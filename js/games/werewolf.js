@@ -5,7 +5,7 @@
 const WerewolfGame = {
   id: "werewolf",
   name: "人狼",
-  minPlayers: 5,
+  minPlayers: 4,
   maxPlayers: 13,
 
   roleNames: {
@@ -37,6 +37,7 @@ const WerewolfGame = {
   },
 
   SETUP_HINTS: {
+    4: "村人2・占い師・人狼",
     5: "村人2・占い師・人狼・狂人",
     6: "村人2・占い師・狩人・人狼・狂人",
     7: "村人2・占い師・霊能者・狩人・人狼・狂人",
@@ -361,6 +362,7 @@ const WerewolfGame = {
       nightTurnIndex: -1,
       voteTurnIndex: -1,
       discussionEndsAt: null,
+      proceedReady: {},
       nightActions: {
         wolfTarget: null,
         seerTarget: null,
@@ -706,6 +708,7 @@ const WerewolfGame = {
     gs.foxDivinedDeath = false;
     gs.phase = "day";
     gs.discussionEndsAt = Date.now() + this.DISCUSSION_MS;
+    gs.proceedReady = {};
     room.phase = "wolf_day";
     return room;
   },
@@ -805,6 +808,65 @@ const WerewolfGame = {
     const alive = this.getAlivePlayers(room);
     const gs = room.gameState;
     return alive.every(function (p) { return gs.votes[p.id]; });
+  },
+
+  countVotesCast: function (room) {
+    const gs = room.gameState;
+    return this.getAlivePlayers(room).filter(function (p) { return gs.votes[p.id]; }).length;
+  },
+
+  hasVoteMajority: function (room) {
+    const total = this.getAlivePlayers(room).length;
+    if (!total) return false;
+    return this.countVotesCast(room) > total / 2;
+  },
+
+  canResolveVote: function (room) {
+    return this.allVoted(room) || this.hasVoteMajority(room);
+  },
+
+  countProceedReady: function (room) {
+    const ready = room.gameState.proceedReady || {};
+    return room.players.filter(function (p) { return ready[p.id]; }).length;
+  },
+
+  hasProceedMajority: function (room) {
+    const total = room.players.length;
+    if (!total) return false;
+    return this.countProceedReady(room) > total / 2;
+  },
+
+  markProceedReady: function (room, playerId) {
+    const gs = room.gameState;
+    if (!gs.proceedReady) gs.proceedReady = {};
+    gs.proceedReady[playerId] = true;
+    return room;
+  },
+
+  renderProceedReadyPanel: function (room, me, action) {
+    const gs = room.gameState;
+    const ready = gs.proceedReady || {};
+    const total = room.players.length;
+    const count = this.countProceedReady(room);
+    const majority = Math.floor(total / 2) + 1;
+    const html = [];
+
+    html.push('<section class="card"><h2>投票に進む</h2>');
+    html.push('<p class="note">残り時間を待たず、過半数（' + majority + '人）が賛成すると投票に進みます。</p>');
+    html.push('<ul class="player-list">');
+    room.players.forEach(function (p) {
+      html.push('<li>' + escapeHtml(p.name) + (ready[p.id] ? ' ✓' : '') + '</li>');
+    });
+    html.push('</ul>');
+    html.push('<p class="note">' + count + '/' + total + '人が賛成</p>');
+
+    if (!ready[me.id]) {
+      html.push('<button type="button" class="btn btn-secondary btn-block" data-action="' + action + '">投票に進みたい</button>');
+    } else {
+      html.push('<p class="note">あなたは投票に進みたいに賛成済みです</p>');
+    }
+    html.push('</section>');
+    return html.join("");
   },
 
   resolveVote: function (room, roles) {
@@ -1246,10 +1308,16 @@ const WerewolfGame = {
       html.push('</section>');
     }
 
-    if (canManage && this.allVoted(room)) {
+    if (canManage && this.canResolveVote(room)) {
       html.push('<button class="btn btn-danger btn-block" data-action="wolf-resolve-vote">投票を集計して処刑へ</button>');
-    } else if (canManage && !turnPlayer && !this.allVoted(room)) {
-      html.push('<p class="note">全員の投票を待っています</p>');
+      if (!this.allVoted(room)) {
+        html.push('<p class="note">過半数の投票が揃いました。未投票の人がいても集計できます。</p>');
+      }
+    } else if (canManage && !turnPlayer) {
+      const voted = this.countVotesCast(room);
+      const alive = this.getAlivePlayers(room).length;
+      const majority = Math.floor(alive / 2) + 1;
+      html.push('<p class="note">投票済み ' + voted + '/' + alive + '人（過半数 ' + majority + '人で集計可能）</p>');
     }
 
     html.push('<section class="card"><h2>生存者</h2>' + this.renderAlivePlayerStrip(room, gs, { showVotes: true }) + '</section>');
@@ -1265,6 +1333,7 @@ const WerewolfGame = {
     if (!gs) return room;
     if (!gs.roleConfirmed) gs.roleConfirmed = {};
     if (!gs.alive) gs.alive = room.players.map(function (p) { return p.id; });
+    if (!gs.proceedReady) gs.proceedReady = {};
     if (room.phase === "wolf_day" && gs.votes && Object.keys(gs.votes).length > 0) {
       room.phase = "wolf_vote";
       gs.phase = "vote";
@@ -1824,10 +1893,15 @@ const WerewolfGame = {
 
       html.push('<section class="card"><h2>生存者</h2>' + this.renderAlivePlayerStrip(room, gs) + '</section>');
 
+      if (me) {
+        html.push(this.renderProceedReadyPanel(room, me, "wolf-proceed-ready"));
+      }
+
       if (canManage) {
         html.push('<button type="button" class="btn btn-primary btn-block" data-action="wolf-start-vote">投票を始める</button>');
+        html.push('<p class="note">ホストはいつでも投票を始められます（残り時間を待つ必要はありません）</p>');
       } else {
-        html.push('<p class="note">投票を始めるのを待っています…</p>');
+        html.push('<p class="note">過半数が賛成するか、ホストが投票を始めるのを待っています…</p>');
       }
       return html.join("");
     }
@@ -1865,10 +1939,16 @@ const WerewolfGame = {
         html.push('</section>');
       }
 
-      if (canManage && this.allVoted(room)) {
+      if (canManage && this.canResolveVote(room)) {
         html.push('<button type="button" class="btn btn-danger btn-block" data-action="wolf-resolve-vote">投票を集計して処刑へ</button>');
+        if (!this.allVoted(room)) {
+          html.push('<p class="note">過半数の投票が揃いました。未投票の人がいても集計できます。</p>');
+        }
       } else if (canManage) {
-        html.push('<p class="note">全員の投票を待っています</p>');
+        const voted = this.countVotesCast(room);
+        const alive = this.getAlivePlayers(room).length;
+        const majority = Math.floor(alive / 2) + 1;
+        html.push('<p class="note">投票済み ' + voted + '/' + alive + '人（過半数 ' + majority + '人で集計可能）</p>');
       }
       return html.join("");
     }

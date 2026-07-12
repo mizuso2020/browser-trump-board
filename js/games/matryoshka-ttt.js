@@ -7,6 +7,8 @@ const MatryoshkaTttGame = {
   name: "マトリョーシカ○×",
   minPlayers: 2,
   maxPlayers: 2,
+  _localSelection: null,
+  _localSelectionTurn: null,
   BOARD_SIZE: 3,
   PLAYER1: 1,
   PLAYER2: 2,
@@ -34,7 +36,8 @@ const MatryoshkaTttGame = {
       drawReason: null
     };
     room.phase = "mttt_play";
-    return room;
+    this.clearLocalSelection();
+    return this.normalizeGameState(room);
   },
 
   createEmptyBoard: function () {
@@ -56,6 +59,19 @@ const MatryoshkaTttGame = {
     };
   },
 
+  normalizeGameState: function (room) {
+    if (!room || !room.gameState) return room;
+    const gs = room.gameState;
+    if (!gs.board) gs.board = this.createEmptyBoard();
+    if (!gs.hands || !gs.hands[1] || !gs.hands[2]) {
+      gs.hands = this.createInitialHands();
+    }
+    if (gs.turn !== this.PLAYER1 && gs.turn !== this.PLAYER2) {
+      gs.turn = this.PLAYER1;
+    }
+    return room;
+  },
+
   opponent: function (player) {
     return player === this.PLAYER1 ? this.PLAYER2 : this.PLAYER1;
   },
@@ -67,6 +83,37 @@ const MatryoshkaTttGame = {
 
   isRemoteRoom: function (room) {
     return room.mode === "room" || room.mode === "online";
+  },
+
+  clearLocalSelection: function () {
+    this._localSelection = null;
+    this._localSelectionTurn = null;
+  },
+
+  getSelection: function (room) {
+    if (!room || !room.gameState) return null;
+    const gs = room.gameState;
+    if (gs.finished) {
+      this.clearLocalSelection();
+      return null;
+    }
+    if (!this.isRemoteRoom(room)) {
+      return gs.selected || null;
+    }
+    if (this._localSelectionTurn !== null && this._localSelectionTurn !== gs.turn) {
+      this.clearLocalSelection();
+    }
+    return this._localSelection;
+  },
+
+  setSelection: function (room, sel) {
+    if (!room || !room.gameState) return;
+    if (!this.isRemoteRoom(room)) {
+      room.gameState.selected = sel;
+      return;
+    }
+    this._localSelection = sel;
+    this._localSelectionTurn = sel ? room.gameState.turn : null;
   },
 
   isMyTurn: function (ctx) {
@@ -115,8 +162,9 @@ const MatryoshkaTttGame = {
     return { owner: selection.owner, size: selection.size };
   },
 
-  getLegalTargets: function (gs) {
-    const sel = gs.selected;
+  getLegalTargets: function (room) {
+    const gs = room.gameState;
+    const sel = this.getSelection(room);
     if (!sel || sel.owner !== gs.turn) return [];
 
     const piece = this.getMovingPiece(sel);
@@ -133,8 +181,8 @@ const MatryoshkaTttGame = {
     return targets;
   },
 
-  isLegalTarget: function (gs, row, col) {
-    const targets = this.getLegalTargets(gs);
+  isLegalTarget: function (room, row, col) {
+    const targets = this.getLegalTargets(room);
     return targets.some(function (pos) {
       return pos[0] === row && pos[1] === col;
     });
@@ -183,6 +231,7 @@ const MatryoshkaTttGame = {
   },
 
   selectHand: function (room, size) {
+    this.normalizeGameState(room);
     const gs = room.gameState;
     if (gs.finished) return { ok: false, error: "ゲームは終了しています" };
 
@@ -191,48 +240,50 @@ const MatryoshkaTttGame = {
     if (parsedSize < 1 || parsedSize > 3) return { ok: false, error: "コマを選べません" };
     if (gs.hands[turn][parsedSize] <= 0) return { ok: false, error: "そのコマはもうありません" };
 
-    const current = gs.selected;
+    const current = this.getSelection(room);
     if (current && current.type === "hand" && current.size === parsedSize && current.owner === turn) {
-      gs.selected = null;
-      return { ok: true, room: room };
+      this.setSelection(room, null);
+      return { ok: true, room: room, needsSave: false };
     }
 
-    gs.selected = { type: "hand", owner: turn, size: parsedSize };
-    return { ok: true, room: room };
+    this.setSelection(room, { type: "hand", owner: turn, size: parsedSize });
+    return { ok: true, room: room, needsSave: false };
   },
 
   handleCell: function (room, row, col) {
+    this.normalizeGameState(room);
     const gs = room.gameState;
     if (gs.finished) return { ok: false, error: "ゲームは終了しています" };
 
     const turn = gs.turn;
     const cell = gs.board[row][col];
     const top = this.topPiece(cell);
-    const sel = gs.selected;
+    const sel = this.getSelection(room);
 
     if (!sel) {
       if (top && top.owner === turn) {
-        gs.selected = { type: "board", owner: top.owner, size: top.size, row: row, col: col };
-        return { ok: true, room: room };
+        this.setSelection(room, { type: "board", owner: top.owner, size: top.size, row: row, col: col });
+        return { ok: true, room: room, needsSave: false };
       }
       return { ok: false, error: "手持ちか盤面の自分のコマを選んでください" };
     }
 
     if (this.isSameCell(sel, row, col)) {
-      gs.selected = null;
-      return { ok: true, room: room };
+      this.setSelection(room, null);
+      return { ok: true, room: room, needsSave: false };
     }
 
     if (top && top.owner === turn) {
-      gs.selected = { type: "board", owner: top.owner, size: top.size, row: row, col: col };
-      return { ok: true, room: room };
+      this.setSelection(room, { type: "board", owner: top.owner, size: top.size, row: row, col: col });
+      return { ok: true, room: room, needsSave: false };
     }
 
-    if (!this.isLegalTarget(gs, row, col)) {
+    if (!this.isLegalTarget(room, row, col)) {
       return { ok: false, error: "そこには置けません" };
     }
 
     this.applyMove(gs, sel, row, col);
+    this.setSelection(room, null);
     gs.selected = null;
 
     const result = this.evaluateWin(gs.board);
@@ -241,14 +292,15 @@ const MatryoshkaTttGame = {
       gs.winner = result.winner;
       gs.winningLines = result.winningLines;
       gs.drawReason = result.drawReason;
-      return { ok: true, room: room };
+      return { ok: true, room: room, needsSave: true };
     }
 
     gs.turn = this.opponent(turn);
-    return { ok: true, room: room };
+    return { ok: true, room: room, needsSave: true };
   },
 
   cancelSelect: function (room) {
+    this.setSelection(room, null);
     if (room.gameState) room.gameState.selected = null;
     return room;
   },
@@ -273,10 +325,9 @@ const MatryoshkaTttGame = {
     return '<span class="' + cls + '" aria-hidden="true"></span>';
   },
 
-  renderBoardCell: function (ctx, row, col, gs, legalTargets) {
+  renderBoardCell: function (ctx, row, col, gs, legalTargets, sel) {
     const cell = gs.board[row][col];
     const top = this.topPiece(cell);
-    const sel = gs.selected;
     const isSource = this.isSameCell(sel, row, col);
     const isTarget = legalTargets.some(function (pos) {
       return pos[0] === row && pos[1] === col;
@@ -300,12 +351,11 @@ const MatryoshkaTttGame = {
     return html;
   },
 
-  renderHand: function (ctx, owner, gs) {
+  renderHand: function (ctx, owner, gs, sel) {
     const player = this.getPlayerForOwner(ctx.room, owner);
     const hand = gs.hands[owner];
     const isTurn = gs.turn === owner && !gs.finished;
     const canInteract = !this.isRemoteRoom(ctx.room) || (this.isMyTurn(ctx) && ctx.me && player && player.id === ctx.me.id);
-    const sel = gs.selected;
     let html = '<div class="mttt-hand mttt-hand--' + (owner === this.PLAYER1 ? "p1" : "p2") + (isTurn ? " is-active" : "") + '">';
     html += "<p class=\"mttt-hand-label\">" + escapeHtml(player ? player.name : this.ownerLabel(owner)) + " の手持ち</p>";
     html += '<div class="mttt-hand-pieces">';
@@ -331,12 +381,40 @@ const MatryoshkaTttGame = {
     return html;
   },
 
+  renderOpponentHandSummary: function (ctx, owner, gs) {
+    const player = this.getPlayerForOwner(ctx.room, owner);
+    const hand = gs.hands[owner];
+    const html = [];
+    html.push('<div class="mttt-hand mttt-hand--' + (owner === this.PLAYER1 ? "p1" : "p2") + ' mttt-hand--readonly">');
+    html.push("<p class=\"mttt-hand-label\">" + escapeHtml(player ? player.name : this.ownerLabel(owner)) + " の手持ち</p>");
+    html.push('<p class="note mttt-hand-readonly-note">小×' + hand[1] + " 中×" + hand[2] + " 大×" + hand[3] + "</p>");
+    html.push("</div>");
+    return html.join("");
+  },
+
+  renderHands: function (ctx, gs, sel) {
+    if (!this.isRemoteRoom(ctx.room) || !ctx.me) {
+      return this.renderHand(ctx, this.PLAYER1, gs, sel) + this.renderHand(ctx, this.PLAYER2, gs, sel);
+    }
+    const p1 = this.getPlayerForOwner(ctx.room, this.PLAYER1);
+    const p2 = this.getPlayerForOwner(ctx.room, this.PLAYER2);
+    if (p1 && p1.id === ctx.me.id) {
+      return this.renderHand(ctx, this.PLAYER1, gs, sel) + this.renderOpponentHandSummary(ctx, this.PLAYER2, gs);
+    }
+    if (p2 && p2.id === ctx.me.id) {
+      return this.renderHand(ctx, this.PLAYER2, gs, sel) + this.renderOpponentHandSummary(ctx, this.PLAYER1, gs);
+    }
+    return this.renderHand(ctx, this.PLAYER1, gs, sel) + this.renderHand(ctx, this.PLAYER2, gs, sel);
+  },
+
   render: function (ctx) {
+    this.normalizeGameState(ctx.room);
     const gs = ctx.room.gameState;
+    const sel = this.getSelection(ctx.room);
     const current = this.getPlayerForOwner(ctx.room, gs.turn);
     const p1 = this.getPlayerForOwner(ctx.room, this.PLAYER1);
     const p2 = this.getPlayerForOwner(ctx.room, this.PLAYER2);
-    const legalTargets = gs.selected && !gs.finished ? this.getLegalTargets(gs) : [];
+    const legalTargets = sel && !gs.finished ? this.getLegalTargets(ctx.room) : [];
     let html = "";
 
     html += '<section class="card mttt-card">';
@@ -363,7 +441,7 @@ const MatryoshkaTttGame = {
       } else {
         html += '<p class="mttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + this.ownerLabel(gs.turn) + "）</strong> の番です。相手の操作を待っています…";
       }
-      if (gs.selected) {
+      if (sel) {
         html += " 置き先のマスをタップしてください。";
       } else {
         html += " 手持ちか盤面の自分のコマをタップしてください。";
@@ -371,16 +449,15 @@ const MatryoshkaTttGame = {
       html += "</p>";
     }
 
-    html += this.renderHand(ctx, this.PLAYER1, gs);
-    html += this.renderHand(ctx, this.PLAYER2, gs);
+    html += this.renderHands(ctx, gs, sel);
 
-    if (gs.selected && !gs.finished) {
+    if (sel && !gs.finished && this.isMyTurn(ctx)) {
       html += '<div class="mttt-select-bar">';
       html += "<span>選択中: ";
-      if (gs.selected.type === "hand") {
-        html += this.SIZE_LABELS[gs.selected.size] + "（手持ち）";
+      if (sel.type === "hand") {
+        html += this.SIZE_LABELS[sel.size] + "（手持ち）";
       } else {
-        html += this.SIZE_LABELS[gs.selected.size] + "（盤面）";
+        html += this.SIZE_LABELS[sel.size] + "（盤面）";
       }
       html += '</span><button type="button" class="btn btn-secondary mttt-cancel-btn" data-action="mttt-cancel">選択解除</button>';
       html += "</div>";
@@ -390,7 +467,7 @@ const MatryoshkaTttGame = {
     html += '<div class="mttt-board" role="grid" aria-label="マトリョーシカ○×盤">';
     for (let r = 0; r < this.BOARD_SIZE; r++) {
       for (let c = 0; c < this.BOARD_SIZE; c++) {
-        html += this.renderBoardCell(ctx, r, c, gs, legalTargets);
+        html += this.renderBoardCell(ctx, r, c, gs, legalTargets, sel);
       }
     }
     html += "</div></div>";
@@ -407,7 +484,6 @@ const MatryoshkaTttGame = {
       html += '<p class="mttt-result">' + result + "</p>";
       if (ctx.isHost) {
         html += '<button type="button" class="btn btn-primary" data-action="mttt-restart">もう一局</button>';
-        html += '<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>';
       }
     } else if (ctx.isHost) {
       html += '<button type="button" class="btn btn-secondary mttt-reset-btn" data-action="mttt-restart">最初から</button>';

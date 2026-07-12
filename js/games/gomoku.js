@@ -112,6 +112,29 @@ const GomokuGame = {
     return color === this.BLACK ? room.players[0] : room.players[1];
   },
 
+  isRemoteRoom: function (room) {
+    return room.mode === "room" || room.mode === "online";
+  },
+
+  isMyTurn: function (ctx) {
+    if (!this.isRemoteRoom(ctx.room)) return true;
+    const gs = ctx.room.gameState;
+    if (!gs || gs.finished) return false;
+    const player = this.getPlayerForColor(ctx.room, gs.turn);
+    return !!(ctx.me && player && player.id === ctx.me.id);
+  },
+
+  renderTurnNote: function (ctx, current, colorLabel) {
+    if (!current) return "";
+    if (!this.isRemoteRoom(ctx.room)) {
+      return '<p class="gomoku-turn-note"><strong>' + escapeHtml(current.name) + "（" + colorLabel + "）</strong> の番です。スマホを渡して置いてください。</p>";
+    }
+    if (this.isMyTurn(ctx)) {
+      return '<p class="gomoku-turn-note"><strong>あなたの番</strong>（' + colorLabel + "）です。置きたいマスをタップしてください。</p>";
+    }
+    return '<p class="gomoku-turn-note"><strong>' + escapeHtml(current.name) + "（" + colorLabel + "）</strong> の番です。相手の操作を待っています…</p>";
+  },
+
   colorLabel: function (color) {
     return color === this.BLACK ? "黒" : "白";
   },
@@ -194,7 +217,7 @@ const GomokuGame = {
     html += '</div>';
 
     if (!gs.finished && current) {
-      html += '<p class="gomoku-turn-note"><strong>' + escapeHtml(current.name) + '（' + this.colorLabel(gs.turn) + '）</strong> の番です。スマホを渡して置いてください。</p>';
+      html += this.renderTurnNote(ctx, current, this.colorLabel(gs.turn));
     }
 
     html += '<div class="gomoku-board-wrap">';
@@ -207,7 +230,7 @@ const GomokuGame = {
         if (cell === this.WHITE) classes += " has-white";
 
         html += '<button type="button" class="' + classes + '" data-action="gomoku-play" data-row="' + r + '" data-col="' + c + '"';
-        if (gs.finished || cell !== this.EMPTY) html += ' disabled';
+        if (gs.finished || cell !== this.EMPTY || !this.isMyTurn(ctx)) html += ' disabled';
         html += ' aria-label="' + (r + 1) + '行' + (c + 1) + '列">';
         if (cell !== this.EMPTY) {
           html += this.renderPiece(cell, r, c, lastMove, winningLine);
@@ -227,7 +250,6 @@ const GomokuGame = {
       html += '<p class="gomoku-result">' + result + '</p>';
       if (ctx.isHost) {
         html += '<button type="button" class="btn btn-primary" data-action="gomoku-restart">もう一局</button>';
-        html += '<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>';
       }
     }
 

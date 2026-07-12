@@ -824,7 +824,6 @@ const ShogiGame = {
       html += '<p class="shogi-result">' + result + '</p>';
       if (ctx.isHost) {
         html += '<button type="button" class="btn btn-primary" data-action="shogi-restart">もう一局</button>';
-        html += '<button type="button" class="btn btn-secondary" data-action="back-lobby" style="margin-top:0.5rem">ロビーに戻る</button>';
       }
     } else {
       html += '<button type="button" class="btn btn-secondary shogi-resign-btn" data-action="shogi-resign">投了</button>';

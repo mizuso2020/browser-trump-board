@@ -106,6 +106,30 @@ def is_game_started(public):
     return phase != "lobby" or bool(public.get("game"))
 
 
+def is_game_finished(public):
+    if not isinstance(public, dict):
+        return False
+    phase = public.get("phase") or "lobby"
+    if phase == "lobby" or not public.get("game"):
+        return False
+    gs = public.get("gameState")
+    if isinstance(gs, dict):
+        if gs.get("finished") is True:
+            return True
+        if gs.get("gameOver") is True:
+            return True
+    finished_phases = {
+        "wolf_end",
+        "wordwolf_end",
+        "wordwolf_result",
+        "ito_result",
+        "oldmaid_result",
+        "coyote_result",
+        "sevens_result",
+    }
+    return phase in finished_phases
+
+
 def reject_public_put(old_public, public):
     """Return error code string if PUT must be rejected, else None."""
     if not isinstance(public, dict):
@@ -119,6 +143,8 @@ def reject_public_put(old_public, public):
     if incoming_at and old_at and incoming_at < old_at:
         return "stale"
     if not is_game_started(public):
+        if is_game_finished(old_public):
+            return None
         return "started"
     return None
 
