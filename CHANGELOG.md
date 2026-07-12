@@ -22,10 +22,11 @@
 | **ノーマル○×ゲーム** | 2人 | https://browser-trump-board.com/games/play.html?game=tic_tac_toe |
 | **消える○×** | 2人 | https://browser-trump-board.com/games/play.html?game=vanishing_ttt |
 | **マトリョーシカ○×** | 2人 | https://browser-trump-board.com/games/play.html?game=matryoshka_ttt |
+| **オセロ** | 2人 | https://browser-trump-board.com/games/play.html?game=reversi |
 
 参加者共通: `play.html?game=＜ゲームID＞&mode=room&code=XXXX`
 
-> **メモ:** オセロ・将棋・五目・ワードウルフなどは **まだ各自のスマホ未対応**（「準備中」または1台モードのみ）。順次追加予定。
+> **メモ:** 五目・将棋・ワードウルフなどは **まだ各自のスマホ未対応**（「準備中」または1台モードのみ）。順次追加予定。
 
 ---
 

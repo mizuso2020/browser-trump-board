@@ -293,12 +293,12 @@ const GAME_REGISTRY = {
     name: "オセロ",
     iconImage: "images/games/reversi-icon.png",
     category: "board",
-    description: "石を裏返しながら陣地を広げる2人対戦。1台のスマホを交代で操作",
+    description: "石を裏返しながら陣地を広げる2人対戦。1台または各自のスマホで対戦",
     minPlayers: 2,
     maxPlayers: 2,
     status: "live",
     featured: true,
-    modesSoon: ["room", "online"],
+    modesSoon: ["online"],
     module: "ReversiGame"
   },
   gomoku: {

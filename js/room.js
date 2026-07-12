@@ -897,6 +897,7 @@ function getBoardMarkHint(gameId, targetRoom, me) {
   if (idx < 0) return "";
   if (gameId === "matryoshka_ttt") return idx === 0 ? "赤（先手）" : "青（後攻）";
   if (gameId === "tic_tac_toe" || gameId === "vanishing_ttt") return idx === 0 ? "〇（先攻）" : "×（後攻）";
+  if (gameId === "reversi" || gameId === "gomoku") return idx === 0 ? "黒（先手）" : "白（後攻）";
   return "";
 }
 
@@ -2112,6 +2113,10 @@ async function handleAction(action, data, ctx) {
     }
 
     case "reversi-play": {
+      if (!ReversiGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const row = parseInt(data.row, 10);
       const col = parseInt(data.col, 10);
       const result = ReversiGame.play(room, row, col);
