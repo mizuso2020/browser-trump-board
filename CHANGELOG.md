@@ -4,9 +4,34 @@
 
 ---
 
-# 2026-07-13 — 人狼「各自のスマホ」解禁・同期バグ修正（最大の手間）
+# 2026-07-13 — 独自ドメイン取得・各自のスマホ対応開始
 
-## 新機能：人狼を各人のスマホで遊べるようにした
+## この日のまとめ
+
+| 項目 | 内容 |
+|------|------|
+| **独自ドメイン** | **browser-trump-board.com** を取得し本番運用開始（Let's Encrypt / nginx） |
+| **各自のスマホ** | ルームコード・QR・参加リンクで **各人のスマホから参加・操作** できる基盤を本番投入 |
+| **本番URL** | https://browser-trump-board.com/games/ |
+
+### 各自のスマホに対応したゲーム（現時点）
+
+| ゲーム | 人数 | ホスト用URL |
+|--------|------|-------------|
+| **人狼** | 5〜13人 | https://browser-trump-board.com/games/play.html?game=werewolf |
+| **ノーマル○×ゲーム** | 2人 | https://browser-trump-board.com/games/play.html?game=tic_tac_toe |
+| **消える○×** | 2人 | https://browser-trump-board.com/games/play.html?game=vanishing_ttt |
+| **マトリョーシカ○×** | 2人 | https://browser-trump-board.com/games/play.html?game=matryoshka_ttt |
+
+参加者共通: `play.html?game=＜ゲームID＞&mode=room&code=XXXX`
+
+> **メモ:** オセロ・将棋・五目・ワードウルフなどは **まだ各自のスマホ未対応**（「準備中」または1台モードのみ）。順次追加予定。
+
+---
+
+## 人狼ルームモード — 詳細・同期バグ修正
+
+### 新機能：人狼を各人のスマホで遊べるようにした
 
 | 項目 | 内容 |
 |------|------|
@@ -31,10 +56,16 @@
 
 ### その後の追記（同日）
 
-- **ノーマル○×・消える○×・マトリョーシカ○×** を各自のスマホ（ルームモード）で解禁
+- **○×ゲーム3種**（ノーマル○×・消える○×・マトリョーシカ○×）を各自のスマホ（ルームモード）で解禁
   - 2人専用、自分の番だけ操作（`isMyTurn`）
   - ホスト＝先攻（〇/赤）、2人目＝後攻（×/青）
 - ゲーム終了後に **「トップへ」** と **その人数で遊べるゲーム一覧** を表示（`renderEndGameNav`）
+
+### インフラ（独自ドメイン）
+
+- ドメイン **browser-trump-board.com** を取得
+- EC2 + nginx で `/games/` を公開、ルームAPIは `/games/api/` 経由
+- デプロイ設定: `deploy/nginx-party-games-domain.conf`, `deploy/setup-domain-ssl.sh`
 
 ---
 
@@ -97,6 +128,8 @@
 | 各自のスマホ | ルームコード / QR で参加、端末ごとに操作 — **人狼・○×3種は 2026-07-13 解禁** |
 | オンライン | Firebase 本番設定、ルームAPI 安定運用 |
 | 公開拡大 | コード済みゲーム（大富豪・ポーカー系など）の順次公開 |
+
+README.md にも同内容を記載。GitHub: https://github.com/mizuso2020/browser-trump-board
 
 **V1（v1.0.0）は 2026-07-12 固定。** 以降の大きな変更は V2。
 
