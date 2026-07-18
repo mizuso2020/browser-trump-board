@@ -39,11 +39,15 @@ let selectedMode = "local";
 let setupPlayerCount = 4;
 let wordwolfThemeId = "all";
 let wordwolfWolfCount = 1;
+let drawingWerewolfThemeId = "all";
+let drawingWerewolfWolfCount = 1;
 let itoSetupMode = "basic";
 let itoCustomLife = 3;
 let itoCustomTurns = 5;
 
 const wordwolfPlaySetupEl = document.getElementById("wordwolfPlaySetup");
+const drawingWerewolfPlaySetupEl = document.getElementById("drawingWerewolfPlaySetup");
+const drawingWerewolfPlaySetupRoomEl = document.getElementById("drawingWerewolfPlaySetupRoom");
 const itoPlaySetupEl = document.getElementById("itoPlaySetup");
 
 const savedName = loadPlayerName();
@@ -171,6 +175,8 @@ function showPlayStep(step) {
   }
   if (step === "room") {
     updateRemoteStepNotes("room");
+    loadDrawingWerewolfPlaySetup();
+    renderDrawingWerewolfPlaySetupPanel();
   }
   if (step === "online") {
     updateRemoteStepNotes("online");
@@ -284,7 +290,20 @@ function playerNamePlaceholder(index) {
   if (meta && (meta.id === "reversi" || meta.id === "gomoku")) {
     return index === 0 ? "黒（先攻）" : "白";
   }
-  return "プレイヤー" + (index + 1);
+  return "ここに名前を記入してね";
+}
+
+function usesPrefillPlayerName(index) {
+  const meta = getActiveGameMeta();
+  if (!meta) return false;
+  return (
+    meta.id === "shogi" ||
+    meta.id === "matryoshka_ttt" ||
+    meta.id === "vanishing_ttt" ||
+    meta.id === "tic_tac_toe" ||
+    meta.id === "reversi" ||
+    meta.id === "gomoku"
+  );
 }
 
 function getSetupPlayerRange() {
@@ -302,7 +321,7 @@ function getSetupPlayerRange() {
       min: meta.minPlayers,
       max: meta.maxPlayers,
       defaultCount: meta.minPlayers,
-      hint: meta.name + "は " + meta.minPlayers + "〜" + meta.maxPlayers + "人です"
+      hint: meta.name + "は " + formatPlayerRange(meta.minPlayers, meta.maxPlayers) + "です"
     };
   }
 
@@ -310,7 +329,7 @@ function getSetupPlayerRange() {
     min: min,
     max: max,
     defaultCount: Math.max(4, min),
-    hint: min + "〜" + max + "人で遊べます"
+    hint: formatPlayerRange(min, max) + "で遊べます"
   };
 }
 
@@ -367,6 +386,88 @@ function bindWordwolfPlaySetupPanel() {
       const delta = parseInt(btn.dataset.wwWolvesDelta, 10);
       wordwolfWolfCount = WordWolfGame.clampWolfCount(setupPlayerCount, wordwolfWolfCount + delta);
       renderWordwolfPlaySetupPanel();
+    });
+  });
+}
+
+function loadDrawingWerewolfPlaySetup() {
+  try {
+    const raw = sessionStorage.getItem("partyGames_drawingWerewolfSetup");
+    if (!raw) return;
+    const saved = JSON.parse(raw);
+    if (saved.themeId) drawingWerewolfThemeId = saved.themeId;
+    if (saved.wolfCount) drawingWerewolfWolfCount = saved.wolfCount;
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function saveDrawingWerewolfPlaySetup() {
+  sessionStorage.setItem("partyGames_drawingWerewolfSetup", JSON.stringify({
+    themeId: drawingWerewolfThemeId,
+    wolfCount: drawingWerewolfWolfCount
+  }));
+}
+
+function isDrawingWerewolfGame() {
+  const meta = getActiveGameMeta();
+  return meta && meta.id === "drawing_werewolf";
+}
+
+function drawingWerewolfSetupTargets() {
+  return [drawingWerewolfPlaySetupEl, drawingWerewolfPlaySetupRoomEl].filter(Boolean);
+}
+
+function renderDrawingWerewolfPlaySetupPanel() {
+  const targets = drawingWerewolfSetupTargets();
+  if (!targets.length) return;
+
+  if (!isDrawingWerewolfGame()) {
+    targets.forEach(function (el) {
+      el.classList.add("hidden");
+      el.innerHTML = "";
+    });
+    return;
+  }
+
+  const wolfCountForLocal = DrawingWerewolfGame.clampWolfCount(setupPlayerCount, drawingWerewolfWolfCount);
+  drawingWerewolfWolfCount = wolfCountForLocal;
+
+  targets.forEach(function (el) {
+    const countHint = el.id === "drawingWerewolfPlaySetupRoom" ? 4 : setupPlayerCount;
+    el.classList.remove("hidden");
+    el.innerHTML = DrawingWerewolfGame.renderPlaySetup(
+      countHint,
+      drawingWerewolfThemeId,
+      DrawingWerewolfGame.clampWolfCount(countHint, drawingWerewolfWolfCount),
+      true
+    );
+  });
+  bindDrawingWerewolfPlaySetupPanel();
+}
+
+function bindDrawingWerewolfPlaySetupPanel() {
+  drawingWerewolfSetupTargets().forEach(function (root) {
+    if (!root || root.classList.contains("hidden")) return;
+
+    root.querySelectorAll("[data-dw-theme]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        drawingWerewolfThemeId = btn.dataset.dwTheme || btn.getAttribute("data-dw-theme");
+        saveDrawingWerewolfPlaySetup();
+        renderDrawingWerewolfPlaySetupPanel();
+      });
+    });
+
+    root.querySelectorAll("[data-dw-wolves-delta]").forEach(function (btn) {
+      btn.addEventListener("click", function () {
+        const delta = parseInt(btn.dataset.dwWolvesDelta, 10);
+        drawingWerewolfWolfCount = DrawingWerewolfGame.clampWolfCount(
+          setupPlayerCount,
+          drawingWerewolfWolfCount + delta
+        );
+        saveDrawingWerewolfPlaySetup();
+        renderDrawingWerewolfPlaySetupPanel();
+      });
     });
   });
 }
@@ -461,6 +562,7 @@ function bindItoPlaySetupPanel() {
 
 function initLocalSetup() {
   loadWordwolfPlaySetup();
+  loadDrawingWerewolfPlaySetup();
   loadItoPlaySetup();
   const range = getSetupPlayerRange();
   setupPlayerCount = range.defaultCount;
@@ -490,7 +592,12 @@ function renderLocalSetup() {
   let html = "";
   for (let i = 0; i < setupPlayerCount; i++) {
     const def = defaultPlayerName(i);
-    const value = previousNames[i] !== undefined ? previousNames[i] : def;
+    let value = "";
+    if (previousNames[i] !== undefined) {
+      value = previousNames[i];
+    } else if (usesPrefillPlayerName(i)) {
+      value = def;
+    }
     const placeholder = playerNamePlaceholder(i);
     html += '<div class="player-name-slot">';
     html += '<label for="setupSlot' + i + '">' + (i + 1) + '.</label>';
@@ -500,6 +607,7 @@ function renderLocalSetup() {
   }
   setupPlayerSlots.innerHTML = html;
   renderWordwolfPlaySetupPanel();
+  renderDrawingWerewolfPlaySetupPanel();
   renderItoPlaySetupPanel();
   if (typeof window.partyGamesItoBoot === "function") {
     window.partyGamesItoBoot();
@@ -556,7 +664,7 @@ function initPlayPage() {
 
   sessionStorage.setItem("partyGames_pendingGame", gameId);
   document.title = meta.name + " | " + getSiteName();
-  document.body.classList.toggle("werewolf-theme", gameId === "werewolf");
+  document.body.classList.remove("werewolf-theme");
 
   if (playGameTitle) {
     playGameTitle.textContent = meta.name;
@@ -634,6 +742,9 @@ async function createRoom(mode, nameInput, btn) {
       if (isWordwolfGame()) {
         saveWordwolfPlaySetup();
       }
+      if (isDrawingWerewolfGame()) {
+        saveDrawingWerewolfPlaySetup();
+      }
       if (isItoGame()) {
         saveItoPlaySetup();
       }
@@ -659,6 +770,16 @@ async function createRoom(mode, nameInput, btn) {
     if (!name) {
       setLoading(btn, false, idleLabel);
       return;
+    }
+
+    if (isWordwolfGame()) {
+      saveWordwolfPlaySetup();
+    }
+    if (isDrawingWerewolfGame()) {
+      saveDrawingWerewolfPlaySetup();
+    }
+    if (isItoGame()) {
+      saveItoPlaySetup();
     }
 
     const code = generateRoomCode();

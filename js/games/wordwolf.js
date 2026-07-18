@@ -7,7 +7,9 @@ const WordWolfGame = {
   name: "ワードウルフ",
   minPlayers: 4,
   maxPlayers: 12,
-  DISCUSSION_MS: 3 * 60 * 1000,
+  DISCUSSION_MS: 5 * 60 * 1000,
+  WIN_CARD_BASE: "images/wordwolf/",
+  WIN_CARD_VERSION: "20260715d",
 
   roleNames: {
     wolf: "ワードウルフ",
@@ -15,16 +17,16 @@ const WordWolfGame = {
   },
 
   THEMES: [
-    { id: "all", name: "おまかせ", hint: "いろいろなお題からランダム" },
-    { id: "animal", name: "動物系", hint: "犬／猫、猫／ライオン など" },
-    { id: "food", name: "食べ物系", hint: "りんご／みかん、ラーメン／うどん など" },
-    { id: "daily", name: "日常系", hint: "朝ごはん／昼ごはん、スマホ／パソコン など" },
-    { id: "nature", name: "自然・季節系", hint: "夏／冬、桜／紅葉、山／海 など" },
-    { id: "place", name: "場所・乗り物系", hint: "電車／バス、映画館／ライブハウス など" },
-    { id: "sports", name: "スポーツ系", hint: "サッカー／野球、テニス／バドミントン など" },
-    { id: "shimeta", name: "下ネタ系", hint: "おなら／げっぷ、トイレ／お風呂 など（下ネタ注意）" },
-    { id: "game", name: "ゲーム系", hint: "マリオ／ルイージ、RPG／アクション など" },
-    { id: "anime", name: "アニメ系", hint: "魔法少女／ヒーロー、転生／異世界 など" }
+    { id: "all", name: "おまかせ", hint: "" },
+    { id: "animal", name: "動物系", hint: "" },
+    { id: "food", name: "食べ物系", hint: "" },
+    { id: "daily", name: "日常系", hint: "" },
+    { id: "nature", name: "自然・季節系", hint: "" },
+    { id: "place", name: "場所・乗り物系", hint: "" },
+    { id: "sports", name: "スポーツ系", hint: "" },
+    { id: "shimeta", name: "飲み会系", hint: "" },
+    { id: "game", name: "ゲーム系", hint: "" },
+    { id: "anime", name: "アニメ系", hint: "" }
   ],
 
   WORD_PAIRS: [
@@ -130,7 +132,7 @@ const WordWolfGame = {
     { citizen: "陸上", wolf: "トライアスロン", theme: "sports" },
     { citizen: "相撲", wolf: "プロレス", theme: "sports" },
 
-    /* 下ネタ系 ×15 */
+    /* 飲み会系 ×15 */
     { citizen: "おなら", wolf: "げっぷ", theme: "shimeta" },
     { citizen: "トイレ", wolf: "お風呂", theme: "shimeta" },
     { citizen: "パンツ", wolf: "ズボン", theme: "shimeta" },
@@ -441,13 +443,82 @@ const WordWolfGame = {
     return room;
   },
 
-  resolveVote: function (room, roles) {
-    const gs = room.gameState;
+  getVoteTally: function (room) {
     const tally = {};
-
-    Object.values(gs.votes).forEach(function (id) {
+    Object.values((room.gameState && room.gameState.votes) || {}).forEach(function (id) {
+      if (!id) return;
       tally[id] = (tally[id] || 0) + 1;
     });
+    return tally;
+  },
+
+  getTopVotes: function (room) {
+    const tally = this.getVoteTally(room);
+    let max = 0;
+    Object.keys(tally).forEach(function (id) {
+      if (tally[id] > max) max = tally[id];
+    });
+    const ids = Object.keys(tally).filter(function (id) {
+      return tally[id] === max;
+    });
+    return { max: max, ids: ids, tally: tally };
+  },
+
+  playerNameById: function (room, id) {
+    const p = room.players.find(function (player) { return player.id === id; });
+    return p ? p.name : "？";
+  },
+
+  renderVoteResults: function (room) {
+    const gs = room.gameState;
+    const top = this.getTopVotes(room);
+    const html = [];
+    html.push('<section class="card wordwolf-vote-results">');
+
+    if (gs.executed) {
+      html.push(
+        '<p>最多票：<strong>' +
+          escapeHtml(this.playerNameById(room, gs.executed)) +
+          '</strong>（' + top.max + '票）</p>'
+      );
+    } else {
+      html.push('<p>同票のため、追放されませんでした</p>');
+      if (top.ids.length && top.max > 0) {
+        const names = top.ids.map(function (id) {
+          return WordWolfGame.playerNameById(room, id);
+        }).join("、");
+        html.push(
+          '<p>最多票：<strong>' +
+            escapeHtml(names) +
+            '</strong>（各 ' + top.max + '票）</p>'
+        );
+      }
+    }
+
+    html.push('<h3 class="wordwolf-vote-heading">投票の内訳</h3>');
+    html.push('<ul class="player-list wordwolf-vote-breakdown">');
+    room.players.forEach(function (p) {
+      const targetId = gs.votes && gs.votes[p.id];
+      if (!targetId) {
+        html.push('<li><span>' + escapeHtml(p.name) + '：未投票</span></li>');
+        return;
+      }
+      html.push(
+        '<li><span>' +
+          escapeHtml(p.name) +
+          ' → ' +
+          escapeHtml(WordWolfGame.playerNameById(room, targetId)) +
+          '</span></li>'
+      );
+    });
+    html.push('</ul></section>');
+    return html.join("");
+  },
+
+  resolveVote: function (room, roles) {
+    const gs = room.gameState;
+    const top = this.getTopVotes(room);
+    const tally = top.tally;
 
     let max = 0;
     let executed = null;
@@ -526,14 +597,14 @@ const WordWolfGame = {
         html.push(
           '<button type="button" class="setup-option' + (selected ? " is-selected" : "") + '" data-action="ww-lobby-theme" data-theme="' + theme.id + '">' +
             '<span class="setup-option-name">' + escapeHtml(theme.name) + '</span>' +
-            '<span class="setup-option-hint">' + escapeHtml(theme.hint) + '</span>' +
+            (theme.hint ? '<span class="setup-option-hint">' + escapeHtml(theme.hint) + '</span>' : "") +
           '</button>'
         );
       } else if (selected) {
         html.push(
           '<div class="setup-option setup-option--readonly is-selected">' +
             '<span class="setup-option-name">' + escapeHtml(theme.name) + '</span>' +
-            '<span class="setup-option-hint">' + escapeHtml(theme.hint) + '</span>' +
+            (theme.hint ? '<span class="setup-option-hint">' + escapeHtml(theme.hint) + '</span>' : "") +
           '</div>'
         );
       }
@@ -577,7 +648,7 @@ const WordWolfGame = {
         html.push(
           '<button type="button" class="setup-option' + (selected ? " is-selected" : "") + '" data-ww-theme="' + theme.id + '">' +
             '<span class="setup-option-name">' + escapeHtml(theme.name) + '</span>' +
-            '<span class="setup-option-hint">' + escapeHtml(theme.hint) + '</span>' +
+            (theme.hint ? '<span class="setup-option-hint">' + escapeHtml(theme.hint) + '</span>' : "") +
           '</button>'
         );
       }
@@ -598,6 +669,18 @@ const WordWolfGame = {
     return html;
   },
 
+  renderWinCard: function (winner) {
+    const isCitizens = winner === "citizens" || winner === "citizens_pending";
+    const file = isCitizens ? "villager.card.png" : "werewolf.card.png";
+    const alt = isCitizens ? "市民の勝利" : "ワードウルフの勝利";
+    const src = this.WIN_CARD_BASE + file + "?v=" + this.WIN_CARD_VERSION;
+    return (
+      '<div class="wordwolf-win-card-stage">' +
+        '<img class="wordwolf-win-card" src="' + src + '" alt="' + alt + '" decoding="async">' +
+      "</div>"
+    );
+  },
+
   renderWordReveal: function (word) {
     return (
       '<div id="wordReveal" class="hidden secret-panel">' +
@@ -612,7 +695,7 @@ const WordWolfGame = {
     return (
       '<section class="card discussion-panel">' +
         '<p class="discussion-timer-label">話し合い 残り時間</p>' +
-        '<p class="discussion-timer" id="discussionTimer">3:00</p>' +
+        '<p class="discussion-timer" id="discussionTimer">5:00</p>' +
         '<p class="note">お題を直接言わず、連想やヒントで会話してください。</p>' +
       '</section>'
     );
@@ -674,7 +757,7 @@ const WordWolfGame = {
     }
 
     if (room.phase === "wordwolf_discuss") {
-      html.push('<div class="phase-banner"><h2>話し合い</h2><p>' + (this.isRemoteRoom(room) ? "みんなで自由に話し合ってください（3分）" : "お題について自由に会話してください（3分）") + '</p></div>');
+      html.push('<div class="phase-banner"><h2>話し合い</h2><p>' + (this.isRemoteRoom(room) ? "みんなで自由に話し合ってください（5分）" : "お題について自由に会話してください（5分）") + '</p></div>');
       if (gs.themeName) {
         html.push('<p class="note" style="text-align:center;margin:-0.5rem 0 1rem">' + escapeHtml(gs.themeName) + ' · ウルフ ' + gs.wolfCount + '人</p>');
       }
@@ -685,13 +768,17 @@ const WordWolfGame = {
       });
       html.push('</ul></section>');
 
-      if (me) {
+      if (me && room.mode !== "local") {
         html.push(this.renderProceedReadyPanel(room, me, "ww-proceed-ready"));
       }
 
       if (canManage) {
         html.push('<button type="button" class="btn btn-primary" data-action="ww-start-vote">投票へ進む</button>');
-        html.push('<p class="note">ホストはいつでも投票へ進めます（残り時間を待つ必要はありません）</p>');
+        if (room.mode === "local") {
+          html.push('<p class="note">話し合いが終わったら投票へ進んでください</p>');
+        } else {
+          html.push('<p class="note">ホストはいつでも投票へ進めます（残り時間を待つ必要はありません）</p>');
+        }
       } else {
         html.push('<p class="note">過半数が賛成するか、ホストが投票へ進むのを待っています…</p>');
       }
@@ -781,35 +868,38 @@ const WordWolfGame = {
     if (room.phase === "wordwolf_end") {
       const roles = this.getRolesMap(ctx);
       const words = this.getWordsMap(ctx);
-      let winText = "ウルフの勝利！🐺";
-      if (gs.winner === "citizens" || gs.winner === "citizens_pending") {
-        winText = "市民の勝利！🎉";
-      }
+      const isCitizensWin = gs.winner === "citizens" || gs.winner === "citizens_pending";
+      const winners = room.players.filter(function (p) {
+        const role = roles[p.id];
+        return isCitizensWin ? role === "citizen" : role === "wolf";
+      });
 
-      html.push('<div class="phase-banner"><h2>結果</h2><p>' + winText + '</p></div>');
-      html.push('<section class="card">');
-      html.push('<p>お題の系統：<strong>' + escapeHtml(gs.themeName || "おまかせ") + '</strong></p>');
-      html.push('<p>ウルフの人数：<strong>' + gs.wolfCount + '人</strong></p>');
-      html.push('<p>市民のお題：<strong>' + escapeHtml(gs.pair.citizen) + '</strong></p>');
-      html.push('<p>ウルフのお題：<strong>' + escapeHtml(gs.pair.wolf) + '</strong></p>');
+      html.push('<div class="phase-banner"><h2>結果</h2></div>');
+      html.push(this.renderWinCard(gs.winner));
+      html.push('<div class="wordwolf-win-headline">勝利</div>');
+      html.push('<ul class="wordwolf-win-players">');
+      winners.forEach(function (p) {
+        html.push('<li>' + escapeHtml(p.name) + '</li>');
+      });
+      html.push('</ul>');
+
+      html.push('<section class="card wordwolf-end-summary">');
+      html.push('<p class="wordwolf-theme-line">お題の系統：<strong>' + escapeHtml(gs.themeName || "おまかせ") + '</strong></p>');
+      html.push('<p class="wordwolf-topic-line">市民のお題：<strong>' + escapeHtml(gs.pair.citizen) + '</strong></p>');
+      html.push('<p class="wordwolf-topic-line">ウルフのお題：<strong>' + escapeHtml(gs.pair.wolf) + '</strong></p>');
       html.push('</section>');
 
-      if (gs.executed) {
-        const ex = room.players.find(function (p) { return p.id === gs.executed; });
-        html.push('<section class="card"><p>最多票：<strong>' + escapeHtml(ex ? ex.name : "？") + '</strong>（' + escapeHtml(this.roleNames[roles[gs.executed]] || "？") + '）</p></section>');
-      } else {
-        html.push('<section class="card"><p>同票のため、追放されませんでした</p></section>');
-      }
+      html.push(this.renderVoteResults(room));
 
       if (gs.wolfGuess !== null && gs.wolfGuess !== undefined && gs.wolfGuess !== "") {
         const ok = this.normalizeGuess(gs.wolfGuess) === this.normalizeGuess(gs.pair.citizen);
         html.push('<section class="card"><p>ワードウルフの予想：<strong>' + escapeHtml(gs.wolfGuess) + '</strong> — ' + (ok ? "正解！逆転勝利" : "不正解") + '</p></section>');
       }
 
-      html.push('<section class="card"><h2>役職・お題一覧</h2><ul class="player-list">');
+      html.push('<section class="card"><h2>お題一覧</h2><ul class="player-list wordwolf-topic-list">');
       room.players.forEach(function (p) {
         const word = words[p.id];
-        html.push('<li><span>' + escapeHtml(p.name) + ' — ' + escapeHtml(word || "？") + '</span><span>' + escapeHtml(WordWolfGame.roleNames[roles[p.id]] || "？") + '</span></li>');
+        html.push('<li><span>' + escapeHtml(p.name) + '：' + escapeHtml(word || "？") + '</span></li>');
       });
       html.push('</ul></section>');
 

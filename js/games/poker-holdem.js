@@ -67,8 +67,6 @@ const TexasHoldemGame = {
     PokerUtils.placeBet(gs, sbPlayer.id, gs.smallBlind);
     PokerUtils.placeBet(gs, bbPlayer.id, gs.bigBlind);
     gs.currentBet = gs.bigBlind;
-    gs.actedThisStreet[sbPlayer.id] = true;
-    gs.actedThisStreet[bbPlayer.id] = true;
 
     const first = this._nextEligible(room, room.players.findIndex(function (p) { return p.id === bbPlayer.id; }), chips, 1);
     gs.turnPlayerId = first.id;
@@ -98,7 +96,7 @@ const TexasHoldemGame = {
       ctx.room.gameState.folded.indexOf(this._actingPlayer(ctx)) < 0;
   },
 
-  doAction: function (room, playerId, action, amount) {
+  doAction: function (room, playerId, action, amount, opts) {
     const gs = room.gameState;
     if (room.phase !== "poker_bet" || gs.turnPlayerId !== playerId) {
       return { room: room, ok: false, error: "あなたの番ではありません" };
@@ -113,7 +111,7 @@ const TexasHoldemGame = {
     }
 
     if (PokerUtils.bettingComplete(room, gs)) {
-      return this._advanceStreet(room);
+      return this._tryAdvanceStreet(room, opts);
     }
 
     const next = PokerUtils.nextPlayer(room, gs, playerId);
@@ -121,7 +119,55 @@ const TexasHoldemGame = {
       gs.turnPlayerId = next;
       return { room: room, ok: true };
     }
-    return this._advanceStreet(room);
+    return this._tryAdvanceStreet(room, opts);
+  },
+
+  _needsHostDeck: function (gs) {
+    return !gs.deck || !Array.isArray(gs.deck) || gs.deck.length === 0;
+  },
+
+  _tryAdvanceStreet: function (room, opts) {
+    const gs = room.gameState;
+    if (opts && opts.isOnline) {
+      if (!opts.isHost) {
+        gs.pendingStreetAdvance = true;
+        room.phase = "poker_street_pending";
+        return { room: room, ok: true };
+      }
+      if (opts.hostSecrets) {
+        PokerUtils.attachHostSecrets(room, opts.hostSecrets);
+      }
+    }
+    if (this._needsHostDeck(gs)) {
+      gs.pendingStreetAdvance = true;
+      room.phase = "poker_street_pending";
+      return { room: room, ok: true };
+    }
+    const result = this._advanceStreet(room);
+    if (result.ok && opts && opts.isOnline && opts.hostSecrets) {
+      PokerUtils.syncHostSecretsFromState(gs, opts.hostSecrets);
+      delete gs.pendingStreetAdvance;
+    }
+    return result;
+  },
+
+  advancePendingStreet: function (room, hostSecrets) {
+    const gs = room.gameState;
+    if (!gs || !gs.pendingStreetAdvance) {
+      return { room: room, ok: false, error: "場札の配布待ちではありません" };
+    }
+    if (hostSecrets) {
+      PokerUtils.attachHostSecrets(room, hostSecrets);
+    }
+    if (this._needsHostDeck(gs)) {
+      return { room: room, ok: false, error: "デッキがありません" };
+    }
+    delete gs.pendingStreetAdvance;
+    const result = this._advanceStreet(room);
+    if (result.ok && hostSecrets) {
+      PokerUtils.syncHostSecretsFromState(gs, hostSecrets);
+    }
+    return result;
   },
 
   _advanceStreet: function (room) {
@@ -136,16 +182,32 @@ const TexasHoldemGame = {
     }
 
     if (gs.street === "preflop") {
+      if (!gs.deck || gs.deck.length < 3) {
+        gs.pendingStreetAdvance = true;
+        room.phase = "poker_street_pending";
+        return { room: room, ok: false, error: "デッキがありません" };
+      }
       gs.community = gs.community.concat([gs.deck.pop(), gs.deck.pop(), gs.deck.pop()]);
       gs.street = "flop";
     } else if (gs.street === "flop") {
+      if (!gs.deck || gs.deck.length < 1) {
+        gs.pendingStreetAdvance = true;
+        room.phase = "poker_street_pending";
+        return { room: room, ok: false, error: "デッキがありません" };
+      }
       gs.community.push(gs.deck.pop());
       gs.street = "turn";
     } else if (gs.street === "turn") {
+      if (!gs.deck || gs.deck.length < 1) {
+        gs.pendingStreetAdvance = true;
+        room.phase = "poker_street_pending";
+        return { room: room, ok: false, error: "デッキがありません" };
+      }
       gs.community.push(gs.deck.pop());
       gs.street = "river";
     } else {
-      return this._showdown(room);
+      room.phase = "poker_showdown_pending";
+      return { room: room, ok: true };
     }
 
     gs.turnPlayerId = this._firstToAct(room, gs);
@@ -161,6 +223,10 @@ const TexasHoldemGame = {
       return next || p.id;
     }
     return p.id;
+  },
+
+  completeShowdown: function (room) {
+    return this._showdown(room);
   },
 
   _showdown: function (room) {
@@ -205,6 +271,27 @@ const TexasHoldemGame = {
       return html.join("");
     }
 
+    if (room.phase === "poker_street_pending") {
+      html.push('<div class="phase-banner"><h2>場札を配っています</h2></div>');
+      html.push('<p class="note">次のストリートのカードを配布中です…</p>');
+      html.push(PokerUtils.renderChipTable(room, gs));
+      html.push('<section class="card"><h2>場札（コミュニティ）</h2><div class="hand-row">');
+      if (gs.community.length) {
+        gs.community.forEach(function (c) { html.push(PokerUtils.cardHtml(c, false, false)); });
+      } else {
+        html.push('<span class="note">まだ場にカードはありません</span>');
+      }
+      html.push('</div></section>');
+      return html.join("");
+    }
+
+    if (room.phase === "poker_showdown_pending") {
+      html.push('<div class="phase-banner"><h2>ショーダウン</h2></div>');
+      html.push('<p class="note">役の判定中です…</p>');
+      html.push(PokerUtils.renderChipTable(room, gs));
+      return html.join("");
+    }
+
     if (room.phase === "poker_showdown") {
       const sd = gs.showdown;
       html.push('<div class="phase-banner"><h2>ハンド終了</h2></div>');
@@ -225,7 +312,11 @@ const TexasHoldemGame = {
     }
 
     html.push('<div class="phase-banner"><h2>テキサスホールデム ⭐</h2>');
-    html.push('<p>' + this._streetLabel(gs.street) + '　ハンド #' + gs.handNumber + '</p></div>');
+    html.push('<p>' + this._streetLabel(gs.street) + '　ハンド #' + gs.handNumber + '</p>');
+    if (gs.turnPlayerId && room.phase === "poker_bet") {
+      html.push(TrumpUi.renderTurnOrderBlock(room, gs, { folded: gs.folded || [] }));
+    }
+    html.push('</div>');
 
     html.push(PokerUtils.renderChipTable(room, gs));
 
@@ -269,9 +360,11 @@ const TexasHoldemGame = {
       html.push('<button class="btn btn-primary" data-action="pk-raise" data-amount="' + (gs.bigBlind * 2) + '">レイズ +' + (gs.bigBlind * 2) + '</button>');
       html.push('<button class="btn btn-warning" data-action="pk-allin">オールイン（' + (gs.chips[actingId] || 0) + '）</button>');
       html.push('<p class="note">💡 コール＝今のベットに合わせる　レイズ＝さらに賭ける</p></section>');
-    } else if (!ctx.isOnline) {
+    } else if (!this.isMyTurn(ctx)) {
       const tp = room.players.find(function (p) { return p.id === gs.turnPlayerId; });
-      html.push('<section class="card"><p class="note">📱 ' + escapeHtml(tp.name) + ' さんの番</p></section>');
+      if (tp) {
+        html.push('<section class="card"><p class="note">📱 ' + escapeHtml(tp.name) + ' さんの番</p></section>');
+      }
     }
 
     html.push(PokerUtils.renderGuide("holdem"));

@@ -249,6 +249,7 @@ const CoyoteGame = {
       html.push('<p>合計の宣言を始めてください</p>');
     }
     html.push('<p>ターン：<strong>' + escapeHtml(turnPlayer ? turnPlayer.name : "—") + '</strong></p>');
+    html.push(TrumpUi.renderTurnOrderBlock(room, gs, { eliminated: gs.eliminated }));
     html.push('</div>');
 
     if (!ctx.isOnline && room.phase === "coyote_play") {

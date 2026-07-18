@@ -376,7 +376,7 @@ const Sync = {
 
 
 
-    if (hostSecrets && (hostSecrets.numbers || hostSecrets.roles || hostSecrets.hands || hostSecrets.words || hostSecrets.ngCard)) {
+    if (hostSecrets && (hostSecrets.numbers || hostSecrets.roles || hostSecrets.hands || hostSecrets.words || hostSecrets.ngWords || hostSecrets.holeCards || hostSecrets.deck || hostSecrets.skullTypes || hostSecrets.bjStates)) {
 
       payload.hostSecrets = hostSecrets;
 
@@ -471,12 +471,27 @@ const Sync = {
   subscribeServer: function (code, callback) {
 
     const roomId = String(code || "").toUpperCase();
+    let lastPollSnapshot = "";
+
+    const pollSnapshot = function (room) {
+      if (!room || room.__syncFailed) return "";
+      const copy = JSON.parse(JSON.stringify(room));
+      delete copy.updatedAt;
+      delete copy.gameStartedAt;
+      delete copy._syncedGameState;
+      delete copy._syncedAt;
+      delete copy._creatorName;
+      return JSON.stringify(copy);
+    };
 
     const poll = async function () {
 
       try {
 
         const latest = await Sync.apiFetch("/room/" + roomId);
+        const snap = pollSnapshot(latest);
+        if (snap && snap === lastPollSnapshot) return;
+        lastPollSnapshot = snap;
 
         callback(latest);
 
@@ -494,7 +509,9 @@ const Sync = {
 
     timer.forcePoll = poll;
 
-    timer.resetPollCache = function () {};
+    timer.resetPollCache = function () {
+      lastPollSnapshot = "";
+    };
 
     return timer;
 
@@ -666,7 +683,7 @@ const Sync = {
 
 
 
-    if (hostSecrets && (hostSecrets.numbers || hostSecrets.roles)) {
+    if (hostSecrets && (hostSecrets.numbers || hostSecrets.roles || hostSecrets.hands || hostSecrets.words || hostSecrets.ngWords || hostSecrets.holeCards || hostSecrets.deck || hostSecrets.skullTypes || hostSecrets.bjStates)) {
 
       await ref.child("hostSecrets").set(hostSecrets);
 
@@ -751,6 +768,31 @@ const Sync = {
 
 
     await this.roomRef(code).child("hostSecrets").update(data);
+
+  },
+
+
+
+  /** ホスト用全手札のうち1人分だけ更新（参加者のプレイ後も同期） */
+  patchHostHand: async function (code, playerId, hand) {
+
+    if (this.shouldUseServerApi()) {
+
+      let current = await this.getHostSecretsServer(code);
+
+      if (!current || typeof current !== "object") current = {};
+
+      if (!current.hands || typeof current.hands !== "object") current.hands = {};
+
+      current.hands[playerId] = hand;
+
+      return this.updateHostSecretsServer(code, current);
+
+    }
+
+
+
+    await this.roomRef(code).child("hostSecrets").child("hands").child(playerId).set(hand);
 
   },
 

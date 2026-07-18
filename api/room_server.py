@@ -21,6 +21,7 @@ PLAYER_RE = re.compile(r"^[a-z0-9]{6,16}$")
 GAME_MAX_PLAYERS = {
     "werewolf": 13,
     "wordwolf": 12,
+    "drawing_werewolf": 10,
     "ito": 8,
     "tic_tac_toe": 2,
     "vanishing_ttt": 2,
@@ -122,6 +123,8 @@ def is_game_finished(public):
         "wolf_end",
         "wordwolf_end",
         "wordwolf_result",
+        "draw_werewolf_end",
+        "ngword_end",
         "ito_result",
         "oldmaid_result",
         "coyote_result",
@@ -318,7 +321,21 @@ class RoomHandler(BaseHTTPRequestHandler):
             code = parts[1].upper()
             if not CODE_RE.match(code):
                 return json_response(self, 400, {"error": "invalid code"})
-            write_json(os.path.join(room_path(code), "hostSecrets.json"), body)
+            path = os.path.join(room_path(code), "hostSecrets.json")
+            old = read_json(path)
+            if isinstance(old, dict) and isinstance(body, dict):
+                merged = dict(old)
+                if isinstance(body.get("hands"), dict):
+                    old_hands = merged.get("hands") if isinstance(merged.get("hands"), dict) else {}
+                    merged["hands"] = dict(old_hands)
+                    merged["hands"].update(body["hands"])
+                    body = dict(body)
+                    body["hands"] = merged["hands"]
+                for key, value in body.items():
+                    if key != "hands":
+                        merged[key] = value
+                body = merged
+            write_json(path, body)
             return json_response(self, 200, {"ok": True})
 
         return json_response(self, 404, {"error": "not found"})

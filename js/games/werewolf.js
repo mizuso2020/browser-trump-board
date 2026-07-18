@@ -5,7 +5,7 @@
 const WerewolfGame = {
   id: "werewolf",
   name: "人狼",
-  minPlayers: 4,
+  minPlayers: 3,
   maxPlayers: 13,
 
   roleNames: {
@@ -24,6 +24,7 @@ const WerewolfGame = {
   },
 
   ROLE_SETUPS: {
+    3: ["villager", "seer", "wolf"],
     4: ["villager", "villager", "seer", "wolf"],
     5: ["villager", "villager", "seer", "wolf", "madman"],
     6: ["villager", "villager", "seer", "hunter", "wolf", "madman"],
@@ -37,6 +38,7 @@ const WerewolfGame = {
   },
 
   SETUP_HINTS: {
+    3: "村人・占い師・人狼",
     4: "村人2・占い師・人狼",
     5: "村人2・占い師・人狼・狂人",
     6: "村人2・占い師・狩人・人狼・狂人",
@@ -53,6 +55,7 @@ const WerewolfGame = {
 
   ROLE_CARD_IMAGE_BASE: "images/roles/",
   ROLE_CARD_BACK_IMAGE: "images/roles/card-back.png",
+  ROLE_CARD_IMAGE_VERSION: "20260715",
 
   ROLE_CARD_META: {
     villager: { icon: "👤", team: "村人陣営", cardDesc: "夜の行動なし。議論と投票", titleColor: "#f8fafc", desc: "会話で人狼を見つけ出す" },
@@ -1054,8 +1057,9 @@ const WerewolfGame = {
   },
 
   getRoleCardImageSrc: function (role) {
-    if (!role) return this.ROLE_CARD_BACK_IMAGE;
-    return this.ROLE_CARD_IMAGE_BASE + role + ".png";
+    const v = this.ROLE_CARD_IMAGE_VERSION;
+    if (!role) return this.ROLE_CARD_BACK_IMAGE + "?v=" + v;
+    return this.ROLE_CARD_IMAGE_BASE + role + ".png?v=" + v;
   },
 
   renderRoleCatalogCard: function (role, options) {
@@ -1063,7 +1067,7 @@ const WerewolfGame = {
     const name = this.roleNames[role] || "？";
     const tag = opts.wrapper === false ? "div" : "article";
     const cls = "jinrou-role-card jinrou-role-card--" + (role || "unknown") + (opts.reveal ? " jinrou-role-card--reveal" : "") + (opts.back ? " jinrou-role-card--back" : "");
-    const src = opts.back ? this.ROLE_CARD_BACK_IMAGE : this.getRoleCardImageSrc(role);
+    const src = opts.back ? this.getRoleCardImageSrc(null) : this.getRoleCardImageSrc(role);
     const alt = opts.back ? "役職カード（裏）" : escapeHtml(name) + "の役職カード";
 
     return (

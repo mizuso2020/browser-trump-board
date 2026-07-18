@@ -198,10 +198,13 @@ const VanishingTttGame = {
 
     if (!gs.finished && current) {
       html += this.renderTurnNote(ctx, current, this.markLabel(gs.turn));
+      if (circlePlayer && crossPlayer) {
+        html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
+          turnPlayerId: current.id,
+          orderIds: [circlePlayer.id, crossPlayer.id]
+        });
+      }
     }
-
-    html += '<div class="vttt-meta">';
-    html += "<span>ターン " + gs.turnCount + " / " + this.MAX_TURNS + "</span>";
     html += "<span>〇 " + gs.circleHistory.length + " · × " + gs.crossHistory.length + "</span>";
     html += "</div>";
 

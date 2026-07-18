@@ -11,18 +11,15 @@ const SevensGame = {
 
   SUITS: ["spade", "heart", "diamond", "club"],
   SUIT_LABEL: { spade: "♠", heart: "♥", diamond: "♦", club: "♣" },
-  RANK_LABEL: { 11: "J", 12: "Q", 13: "K", 14: "A" },
+  RANK_LABEL: { 11: "J", 12: "Q", 13: "K" },
 
   init: function (room) {
-    const deck = shuffle(this._createDeck());
-    const hands = this._deal(room.players, deck);
+    const deck = shuffle(PlayingCards.createDeck54());
+    const hands = PlayingCards.dealEvenly(room.players, deck);
     const starter = this._findSevenDiamond(hands, room.players);
 
     Object.keys(hands).forEach(function (pid) {
-      hands[pid].sort(function (a, b) {
-        if (a.suit !== b.suit) return SevensGame.SUITS.indexOf(a.suit) - SevensGame.SUITS.indexOf(b.suit);
-        return a.rank - b.rank;
-      });
+      PlayingCards.sortHandByRank(hands[pid]);
     });
 
     room.gameState = {
@@ -36,30 +33,6 @@ const SevensGame = {
     };
     room.phase = "sevens_play";
     return room;
-  },
-
-  _createDeck: function () {
-    const deck = [];
-    this.SUITS.forEach(function (suit) {
-      for (let rank = 1; rank <= 13; rank++) {
-        deck.push({ id: suit + rank, suit: suit, rank: rank });
-      }
-    });
-    return deck;
-  },
-
-  _deal: function (players, deck) {
-    const hands = {};
-    const n = players.length;
-    const base = Math.floor(52 / n);
-    const extra = 52 % n;
-    let idx = 0;
-    players.forEach(function (p, i) {
-      const count = base + (i < extra ? 1 : 0);
-      hands[p.id] = deck.slice(idx, idx + count);
-      idx += count;
-    });
-    return hands;
   },
 
   _findSevenDiamond: function (hands, players) {
@@ -76,13 +49,7 @@ const SevensGame = {
     if (!ctx.isOnline) {
       return ctx.room.gameState.hands[playerId] || [];
     }
-    if (playerId === ctx.me.id && ctx.secrets && ctx.secrets.hand) {
-      return ctx.secrets.hand;
-    }
-    if (ctx.hostSecrets && ctx.hostSecrets.hands) {
-      return ctx.hostSecrets.hands[playerId] || [];
-    }
-    return [];
+    return Secrets.getTrumpHand(ctx, playerId);
   },
 
   _actingPlayer: function (ctx) {
@@ -114,6 +81,7 @@ const SevensGame = {
   },
 
   canPlay: function (card, lanes) {
+    if (card.isJoker || !card.suit) return false;
     const lane = lanes[card.suit];
     if (!lane) {
       return card.rank === 7;
@@ -202,24 +170,12 @@ const SevensGame = {
   },
 
   _cardHtml: function (card, selected, selectable) {
-    const suitClass = "card-suit-" + card.suit;
-    const sel = selected ? " is-selected" : "";
-    const r = this.RANK_LABEL[card.rank] || card.rank;
-    if (selectable) {
-      return (
-        '<button type="button" class="playing-card ' + suitClass + sel + '" ' +
-        'data-action="sv-toggle" data-card="' + card.id + '">' +
-        '<span class="card-rank">' + r + '</span>' +
-        '<span class="card-suit">' + this.SUIT_LABEL[card.suit] + '</span>' +
-        '</button>'
-      );
-    }
-    return (
-      '<div class="playing-card ' + suitClass + '">' +
-      '<span class="card-rank">' + r + '</span>' +
-      '<span class="card-suit">' + this.SUIT_LABEL[card.suit] + '</span>' +
-      '</div>'
-    );
+    return PlayingCards.cardHtml(card, {
+      selected: selected,
+      asButton: selectable,
+      action: selectable ? "sv-toggle" : undefined,
+      data: { card: card.id }
+    });
   },
 
   render: function (ctx) {
@@ -242,7 +198,9 @@ const SevensGame = {
     }
 
     html.push('<div class="phase-banner"><h2>七並べ</h2>');
-    html.push('<p>ターン：<strong>' + escapeHtml(turnPlayer.name) + '</strong></p></div>');
+    html.push('<p>ターン：<strong>' + escapeHtml(turnPlayer.name) + '</strong></p>');
+    html.push(TrumpUi.renderTurnOrderBlock(room, gs));
+    html.push('</div>');
 
     if (!ctx.isOnline) {
       html.push('<section class="card"><p class="note">📱 <strong>' + escapeHtml(turnPlayer.name) + '</strong> さんの番。端末を渡してください。</p></section>');
@@ -265,7 +223,7 @@ const SevensGame = {
     html.push('</div></section>');
 
     if (!gs.finished.includes(actingId)) {
-      html.push('<section class="card"><h2>手札（' + escapeHtml(turnPlayer.name) + '）<small> ' + viewHand.length + '枚</small></h2>');
+      html.push('<section class="card"><h2>手札 <small>' + viewHand.length + '枚</small></h2>');
 
       if (this.isMyTurn(ctx)) {
         html.push('<div class="hand-row">');
@@ -276,7 +234,6 @@ const SevensGame = {
         html.push('</div>');
         html.push('<div class="btn-row" style="margin-top:0.75rem">');
         html.push('<button class="btn btn-primary" data-action="sv-play">出す</button>');
-        html.push('<button class="btn btn-secondary" data-action="sv-pass">パス</button>');
         html.push('</div>');
         if (!playable.length) {
           html.push('<p class="note">出せるカードがないのでパスできます</p>');
@@ -293,12 +250,22 @@ const SevensGame = {
       html.push('</section>');
     }
 
-    html.push('<section class="card"><h2>ルール</h2><ul class="clue-list" style="font-size:0.85rem;color:var(--text-dim)">');
-    html.push('<li>♦7 持ちの人から開始。各スートは <strong>7</strong> から上下に並べる</li>');
-    html.push('<li>場の端（±1）か、新スートの7だけ出せる</li>');
-    html.push('<li>出せないときはパス。全員パスで最後に出した人の番に戻る</li>');
-    html.push('<li>手札を先に出し切った人が勝ち</li>');
-    html.push('</ul></section>');
+    const isTurn = this.isMyTurn(ctx);
+    html.push(TrumpUi.renderFooter({
+      passAction: "sv-pass",
+      canPass: isTurn && !gs.finished.includes(actingId),
+      rulesAction: "sv-rules-toggle"
+    }));
+    html.push(TrumpUi.renderRulesPanel(
+      "svRulesPanel",
+      "ルール",
+      '<ul class="clue-list trump-rules-list">' +
+      "<li>♦7 持ちの人から開始。各スートは <strong>7</strong> から上下に並べる</li>" +
+      "<li>場の端（±1）か、新スートの7だけ出せる</li>" +
+      "<li>出せないときはパス。全員パスで最後に出した人の番に戻る</li>" +
+      "<li>手札を先に出し切った人が勝ち</li>" +
+      "</ul>"
+    ));
 
     return html.join("");
   }

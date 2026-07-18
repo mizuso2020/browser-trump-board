@@ -17,6 +17,49 @@ const ShogiGame = {
 
   CAN_PROMOTE: { R: true, B: true, S: true, N: true, L: true, P: true },
 
+  /* 駒画像（images/shogi）— opponent は先に向きが反転済み */
+  PIECE_IMG_BASE: "images/shogi/",
+  PIECE_IMG_VERSION: "20260715a",
+  PIECE_IMG: {
+    "0:K": "09_king_gyoku_smooth.png",
+    "0:R": "02_rook_smooth.png",
+    "0:B": "03_bishop_smooth.png",
+    "0:G": "04_gold_general_smooth.png",
+    "0:S": "05_silver_general_smooth.png",
+    "0:N": "06_knight_smooth.png",
+    "0:L": "07_lance_smooth.png",
+    "0:P": "08_pawn_smooth.png",
+    "0:R:p": "10_promoted_rook_ryuo_smooth.png",
+    "0:B:p": "11_promoted_bishop_ryuma_smooth.png",
+    "0:S:p": "12_promoted_silver_smooth.png",
+    "0:N:p": "13_promoted_knight_smooth.png",
+    "0:L:p": "14_promoted_lance_smooth.png",
+    "0:P:p": "15_promoted_pawn_to_smooth.png",
+    "1:K": "16_king_ou_opponent_smooth.png",
+    "1:R": "17_rook_opponent_smooth.png",
+    "1:B": "18_bishop_opponent_smooth.png",
+    "1:G": "19_gold_general_opponent_smooth.png",
+    "1:S": "20_silver_general_opponent_smooth.png",
+    "1:N": "21_knight_opponent_smooth.png",
+    "1:L": "22_lance_opponent_smooth.png",
+    "1:P": "23_pawn_opponent_smooth.png",
+    "1:R:p": "25_promoted_rook_ryuo_opponent_smooth.png",
+    "1:B:p": "26_promoted_bishop_ryuma_opponent_smooth.png",
+    "1:S:p": "27_promoted_silver_opponent_smooth.png",
+    "1:N:p": "28_promoted_knight_opponent_smooth.png",
+    "1:L:p": "29_promoted_lance_opponent_smooth.png",
+    "1:P:p": "30_promoted_pawn_to_opponent_smooth.png"
+  },
+
+  pieceImageSrc: function (piece) {
+    if (!piece) return "";
+    const owner = piece.o === this.GOTE ? 1 : 0;
+    const key = piece.pr ? owner + ":" + piece.t + ":p" : owner + ":" + piece.t;
+    const file = this.PIECE_IMG[key];
+    if (!file) return "";
+    return this.PIECE_IMG_BASE + file + "?v=" + this.PIECE_IMG_VERSION;
+  },
+
   _checkFlashSide: null,
   _mateFlashWinner: null,
   _checkFlashTimer: null,
@@ -170,12 +213,22 @@ const ShogiGame = {
   renderPieceHtml: function (piece, forHand) {
     const gote = piece.o === this.GOTE;
     const promoted = piece.pr;
+    const src = this.pieceImageSrc(piece);
+    const label = this.pieceLabel(piece);
     let cls = "shogi-piece";
     if (gote) cls += " shogi-piece--gote";
     else cls += " shogi-piece--sente";
     if (promoted) cls += " is-promoted";
     if (forHand) cls += " shogi-piece--hand";
-    return '<span class="' + cls + '"><span class="shogi-piece-shape">' + escapeHtml(this.pieceLabel(piece)) + '</span></span>';
+    if (src) cls += " shogi-piece--img";
+    if (src) {
+      return (
+        '<span class="' + cls + '">' +
+          '<img class="shogi-piece-img" src="' + src + '" alt="' + escapeHtml(label) + '" draggable="false">' +
+        "</span>"
+      );
+    }
+    return '<span class="' + cls + '"><span class="shogi-piece-shape">' + escapeHtml(label) + "</span></span>";
   },
 
   handCount: function (hand, owner, type) {
@@ -657,6 +710,37 @@ const ShogiGame = {
     return side === this.SENTE ? room.players[0] : room.players[1];
   },
 
+  isRemoteRoom: function (room) {
+    return room.mode === "room" || room.mode === "online";
+  },
+
+  getSideForPlayer: function (room, playerId) {
+    if (!room.players || room.players.length < 2 || !playerId) return null;
+    if (room.players[0].id === playerId) return this.SENTE;
+    if (room.players[1].id === playerId) return this.GOTE;
+    return null;
+  },
+
+  isMyTurn: function (ctx) {
+    const gs = ctx.room.gameState;
+    if (!gs || gs.finished || gs.pendingPromotion) return false;
+    if (!this.isRemoteRoom(ctx.room)) return true;
+    const side = this.getSideForPlayer(ctx.room, ctx.me && ctx.me.id);
+    return side !== null && gs.turn === side;
+  },
+
+  renderTurnNote: function (ctx, current, side) {
+    if (!current) return "";
+    const sideLabel = this.sideLabel(side);
+    if (!this.isRemoteRoom(ctx.room)) {
+      return '<p class="shogi-turn-note"><strong>' + escapeHtml(current.name) + "（" + sideLabel + "）</strong> の番です。スマホを渡して指してください。</p>";
+    }
+    if (this.isMyTurn(ctx)) {
+      return '<p class="shogi-turn-note"><strong>あなたの番</strong>（' + sideLabel + "）です。駒をタップして指してください。</p>";
+    }
+    return '<p class="shogi-turn-note"><strong>' + escapeHtml(current.name) + "（" + sideLabel + "）</strong> の番です。相手の手を待っています…</p>";
+  },
+
   sideLabel: function (side) {
     return side === this.SENTE ? "先手" : "後手";
   },
@@ -743,6 +827,7 @@ const ShogiGame = {
     const current = this.getPlayerForSide(ctx.room, turn);
     const sentePlayer = this.getPlayerForSide(ctx.room, this.SENTE);
     const gotePlayer = this.getPlayerForSide(ctx.room, this.GOTE);
+    const myTurn = this.isMyTurn(ctx);
     const canPlay = !gs.finished && !gs.pendingPromotion;
     const legalMoves = canPlay ? this.getLegalMoves(gs.board, gs.hand, turn) : [];
     let html = "";
@@ -757,10 +842,16 @@ const ShogiGame = {
     }
     html += '</div>';
 
-    html += this.renderPlayerBar(gs, this.GOTE, gotePlayer, turn, legalMoves, turn === this.GOTE && canPlay);
+    html += this.renderPlayerBar(gs, this.GOTE, gotePlayer, turn, legalMoves, turn === this.GOTE && canPlay && myTurn);
 
     if (!gs.finished && current) {
-      html += '<p class="shogi-turn-note"><strong>' + escapeHtml(current.name) + '</strong> さんの番です。スマホを渡して指してください。</p>';
+      html += this.renderTurnNote(ctx, current, turn);
+      if (sentePlayer && gotePlayer) {
+        html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
+          turnPlayerId: current.id,
+          orderIds: [sentePlayer.id, gotePlayer.id]
+        });
+      }
     }
 
     if (gs.pendingPromotion) {
@@ -794,7 +885,7 @@ const ShogiGame = {
         if (isCapture && isTarget) cls += " is-capture";
         if (isLast) cls += " is-last";
         html += '<button type="button" class="' + cls + '" data-action="shogi-cell" data-row="' + r + '" data-col="' + c + '"';
-        if (gs.finished || gs.pendingPromotion) html += ' disabled';
+        if (gs.finished || gs.pendingPromotion || !myTurn) html += ' disabled';
         html += '>';
         if (cell) {
           html += this.renderPieceHtml(cell, false);
@@ -805,7 +896,7 @@ const ShogiGame = {
     }
     html += '</div></div>';
 
-    html += this.renderPlayerBar(gs, this.SENTE, sentePlayer, turn, legalMoves, turn === this.SENTE && canPlay);
+    html += this.renderPlayerBar(gs, this.SENTE, sentePlayer, turn, legalMoves, turn === this.SENTE && canPlay && myTurn);
 
     if (gs.finished) {
       let result = "千日手で引き分け";
@@ -825,7 +916,7 @@ const ShogiGame = {
       if (ctx.isHost) {
         html += '<button type="button" class="btn btn-primary" data-action="shogi-restart">もう一局</button>';
       }
-    } else {
+    } else if (myTurn) {
       html += '<button type="button" class="btn btn-secondary shogi-resign-btn" data-action="shogi-resign">投了</button>';
     }
 

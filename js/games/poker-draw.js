@@ -236,7 +236,11 @@ const FiveDrawGame = {
     }
 
     html.push('<div class="phase-banner"><h2>ファイブカード・ドロー</h2>');
-    html.push('<p>' + (gs.street === "draw" ? "カード交換" : gs.street === "bet1" ? "1回目ベット" : "2回目ベット") + '　ハンド #' + gs.handNumber + '</p></div>');
+    html.push('<p>' + (gs.street === "draw" ? "カード交換" : gs.street === "bet1" ? "1回目ベット" : "2回目ベット") + '　ハンド #' + gs.handNumber + '</p>');
+    if (gs.turnPlayerId && (room.phase === "poker_bet" || room.phase === "poker_draw")) {
+      html.push(TrumpUi.renderTurnOrderBlock(room, gs, { folded: gs.folded || [] }));
+    }
+    html.push('</div>');
 
     html.push(PokerUtils.renderChipTable(room, gs));
 
@@ -248,9 +252,11 @@ const FiveDrawGame = {
       }
       myCards.forEach(function (c) {
         const sel = FiveDrawGame._selected.indexOf(c.id) >= 0;
-        html.push('<button type="button" class="playing-card card-suit-' + c.suit + (sel ? " is-selected" : "") + '" data-action="pd-toggle" data-discard="' + c.id + '">');
-        html.push('<span class="card-rank">' + (PokerUtils.RANK_LABEL[c.rank] || c.rank) + '</span>');
-        html.push('<span class="card-suit">' + PokerUtils.SUIT_LABEL[c.suit] + '</span></button>');
+        html.push(PlayingCards.cardHtml(c, {
+          selected: sel,
+          action: "pd-toggle",
+          data: { discard: c.id }
+        }));
       });
       html.push('</div><p class="note">交換したいカードを選んで「交換する」（0枚でもOK）</p>');
       html.push('<button class="btn btn-primary" data-action="pd-draw">交換する（' + FiveDrawGame._selected.length + '枚）</button>');

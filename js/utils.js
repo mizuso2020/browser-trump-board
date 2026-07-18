@@ -134,3 +134,83 @@ function savePlayerName(name) {
 function loadPlayerName() {
   return localStorage.getItem("partyGames_playerName") || "";
 }
+
+/**
+ * トランプ系ゲーム共通UI（順番表示・ルール・パス）
+ */
+const TrumpUi = {
+  renderTurnOrder: function (room, gs, options) {
+    options = options || {};
+    const turnId = options.turnPlayerId || gs.turnPlayerId;
+    const finished = Array.isArray(gs.finished) ? gs.finished : [];
+    const reverse = gs.reverseOrder;
+
+    let html = ['<section class="card turn-order-panel"><h2>順番'];
+    if (reverse) html.push(' <small>（逆回転）</small>');
+    html.push('</h2><ol class="turn-order-list">');
+
+    room.players.forEach(function (p, i) {
+      const isTurn = p.id === turnId;
+      const finIdx = finished.indexOf(p.id);
+      const isOut = finIdx >= 0;
+      let cls = "turn-order-item";
+      if (isTurn && !isOut) cls += " is-current";
+      if (isOut) cls += " is-finished";
+
+      html.push('<li class="' + cls + '"><span>');
+      html.push((i + 1) + ". " + escapeHtml(p.name));
+      if (isTurn && !isOut) html.push(' <strong class="turn-now">← 今</strong>');
+      if (isOut) html.push(' <small>（' + (finIdx + 1) + "位で上がり）</small>");
+      html.push("</span></li>");
+    });
+
+    html.push("</ol></section>");
+    return html.join("");
+  },
+
+  renderFooter: function (options) {
+    const html = ['<section class="card trump-footer-bar"><div class="btn-row trump-footer-row">'];
+
+    if (options.passAction) {
+      const dis = options.canPass ? "" : " disabled";
+      html.push(
+        '<button type="button" class="btn btn-secondary trump-pass-btn" data-action="' +
+        options.passAction + '"' + dis + ">パス</button>"
+      );
+    }
+    if (options.rulesAction) {
+      html.push(
+        '<button type="button" class="btn btn-secondary" data-action="' +
+        options.rulesAction + '">ルール</button>'
+      );
+    }
+    if (options.localRulesAction) {
+      html.push(
+        '<button type="button" class="btn btn-secondary" data-action="' +
+        options.localRulesAction + '">ローカルルール</button>"
+      );
+    }
+
+    html.push("</div></section>");
+    return html.join("");
+  },
+
+  renderRulesPanel: function (panelId, title, bodyHtml) {
+    return (
+      '<section id="' + panelId + '" class="card trump-rules-panel hidden">' +
+      "<h2>" + escapeHtml(title) + "</h2>" + bodyHtml +
+      "</section>"
+    );
+  },
+
+  togglePanel: function (panelId) {
+    const el = document.getElementById(panelId);
+    if (!el) return;
+    el.classList.toggle("hidden");
+  },
+
+  hidePanel: function (panelId) {
+    const el = document.getElementById(panelId);
+    if (el) el.classList.add("hidden");
+  }
+};

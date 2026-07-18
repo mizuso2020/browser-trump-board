@@ -4,7 +4,7 @@
  */
 const ItoGame = {
   id: "ito",
-  name: "イト（Ito）",
+  name: "ナンバーリンク",
   minPlayers: 2,
   maxPlayers: 8,
   INITIAL_LIFE: 3,
@@ -105,7 +105,50 @@ const ItoGame = {
   ],
 
   canManage: function (ctx) {
-    return ctx.isHost || (ctx.room && ctx.room.mode === "local");
+    if (ctx.room && ctx.room.mode === "local") return true;
+    return ctx.isHost;
+  },
+
+  isRemoteRoom: function (room) {
+    return room.mode === "room" || room.mode === "online";
+  },
+
+  canRevealAdvance: function (ctx, playerId) {
+    return this.canManage(ctx) || !!(ctx.me && playerId && ctx.me.id === playerId);
+  },
+
+  getHand: function (ctx, playerId) {
+    if (!ctx.isOnline) {
+      return (ctx.room.gameState.hands && ctx.room.gameState.hands[playerId]) || [];
+    }
+    if (ctx.hostSecrets && ctx.hostSecrets.hands && ctx.hostSecrets.hands[playerId]) {
+      return ctx.hostSecrets.hands[playerId];
+    }
+    if (playerId === ctx.me.id && ctx.secrets) {
+      return ctx.secrets.hand || ctx.secrets.number || [];
+    }
+    return [];
+  },
+
+  attachItoSecrets: function (room, hostSecrets) {
+    if (!hostSecrets || !room.gameState) return;
+    const src = hostSecrets.hands || hostSecrets.numbers;
+    if (!src) return;
+    room.gameState.hands = JSON.parse(JSON.stringify(src));
+    room.gameState.numbers = JSON.parse(JSON.stringify(src));
+  },
+
+  syncItoSecrets: function (room, hostSecrets) {
+    if (!hostSecrets || !room.gameState || !room.gameState.hands) return;
+    hostSecrets.hands = JSON.parse(JSON.stringify(room.gameState.hands));
+    hostSecrets.numbers = JSON.parse(JSON.stringify(room.gameState.hands));
+  },
+
+  _updateHandCounts: function (gs) {
+    gs.handCounts = {};
+    Object.keys(gs.hands || {}).forEach(function (pid) {
+      gs.handCounts[pid] = (gs.hands[pid] || []).length;
+    });
   },
 
   getBasicConfig: function (playerCount) {
@@ -369,6 +412,7 @@ const ItoGame = {
     if (!gs.hands) gs.hands = {};
     if (!gs.field) gs.field = [];
     if (!gs.discarded) gs.discarded = [];
+    if (!gs.handCounts) gs.handCounts = {};
     if (!gs.themeCategoryId) gs.themeCategoryId = "omakase";
     if (typeof gs.revealIndex !== "number") gs.revealIndex = 0;
     if (typeof gs.stage !== "number") gs.stage = 1;
@@ -380,22 +424,29 @@ const ItoGame = {
     return p ? p.name : "?";
   },
 
-  handCount: function (gs, playerId) {
-    const hand = gs.hands[playerId];
+  handCount: function (gs, playerId, ctx) {
+    if (ctx) {
+      const hand = this.getHand(ctx, playerId);
+      if (hand && hand.length) return hand.length;
+    }
+    if (gs.handCounts && typeof gs.handCounts[playerId] === "number") {
+      return gs.handCounts[playerId];
+    }
+    const hand = gs.hands && gs.hands[playerId];
     return hand ? hand.length : 0;
   },
 
-  allHandsEmpty: function (gs, room) {
+  allHandsEmpty: function (gs, room, ctx) {
     const self = this;
     return room.players.every(function (p) {
-      return self.handCount(gs, p.id) === 0;
+      return self.handCount(gs, p.id, ctx) === 0;
     });
   },
 
-  totalRemainingCards: function (gs, room) {
+  totalRemainingCards: function (gs, room, ctx) {
     const self = this;
     return room.players.reduce(function (sum, p) {
-      return sum + self.handCount(gs, p.id);
+      return sum + self.handCount(gs, p.id, ctx);
     }, 0);
   },
 
@@ -412,10 +463,12 @@ const ItoGame = {
     });
     gs.hands = hands;
     gs.numbers = hands;
+    this._updateHandCounts(gs);
     gs.field = [];
     gs.discarded = [];
     gs.revealIndex = 0;
     gs.lastPlayResult = null;
+    this._updateHandCounts(gs);
     return room;
   },
 
@@ -518,6 +571,8 @@ const ItoGame = {
         gs.discarded.push(item);
       });
     }
+
+    this._updateHandCounts(gs);
 
     gs.lastPlayResult = {
       success: success,
@@ -644,22 +699,37 @@ const ItoGame = {
 
     if (room.phase === "ito_reveal") {
       const current = room.players[gs.revealIndex];
+      const isMyReveal = ctx.me && current && ctx.me.id === current.id;
+      const showReveal = room.mode === "local" || isMyReveal;
       html.push(this.renderHud(gs));
       html.push('<div class="phase-banner"><h2>' + escapeHtml(current ? current.name : "") + ' — 数字をめくる</h2>');
-      html.push('<p>' + (gs.revealIndex + 1) + '人目 / 全' + room.players.length + '人　ターン ' + gs.stage + '（各' + gs.stage + '枚）</p></div>');
+      html.push('<p>' + (gs.revealIndex + 1) + '人目 / 全' + room.players.length + '人　ターン ' + gs.stage + '（各' + gs.stage + '枚）</p>');
+      if (current) {
+        html.push(TrumpUi.renderTurnOrderBlock(room, {}, {
+          turnPlayerId: current.id,
+          orderIds: room.players.map(function (p) { return p.id; })
+        }));
+      }
+      html.push('</div>');
       html.push('<section class="card ito-reveal-card">');
       if (current) {
-        html.push('<p class="note">スマホを <strong>' + escapeHtml(current.name) + '</strong> に渡して、周りに見えないように数字を確認してください。</p>');
-        html.push('<div id="itoRevealFlipZone" class="ito-reveal-flip-zone">');
-        html.push(this.renderFlipHandCards(gs.hands[current.id]));
-        html.push('</div>');
-        html.push('<button type="button" class="btn btn-secondary ito-reveal-btn" data-action="ito-reveal-number">数字をめくる</button>');
-        html.push('<div id="revealArea" class="hidden secret-panel ito-secret-panel ito-reveal-meta">');
-        html.push('<p class="ito-secret-label">' + escapeHtml(current.name) + ' の数字（小→大）</p>');
-        html.push('<p class="note">お題「' + escapeHtml(gs.theme) + '」に沿った言葉だけで表現。数字は言わない！</p>');
-        html.push('<button type="button" class="btn btn-primary" data-action="ito-hide-number">隠す</button></div>');
-        html.push('<button type="button" class="btn btn-primary ito-next-reveal-btn" data-action="ito-next-reveal">' +
-          (gs.revealIndex < room.players.length - 1 ? "次の人へ渡す" : "カードを出すへ進む") + '</button>');
+        if (showReveal) {
+          html.push('<p class="note">周りに見えないように数字を確認してください。</p>');
+          html.push('<div id="itoRevealFlipZone" class="ito-reveal-flip-zone">');
+          html.push(this.renderFlipHandCards(this.getHand(ctx, current.id)));
+          html.push('</div>');
+          html.push('<button type="button" class="btn btn-secondary ito-reveal-btn" data-action="ito-reveal-number">数字をめくる</button>');
+          html.push('<div id="revealArea" class="hidden secret-panel ito-secret-panel ito-reveal-meta">');
+          html.push('<p class="ito-secret-label">' + escapeHtml(current.name) + ' の数字（小→大）</p>');
+          html.push('<p class="note">お題「' + escapeHtml(gs.theme) + '」に沿った言葉だけで表現。数字は言わない！</p>');
+          html.push('<button type="button" class="btn btn-primary" data-action="ito-hide-number">隠す</button></div>');
+        } else {
+          html.push('<p class="note">📱 <strong>' + escapeHtml(current.name) + '</strong> さんが数字を確認しています…</p>');
+        }
+        if (this.canRevealAdvance(ctx, current.id)) {
+          html.push('<button type="button" class="btn btn-primary ito-next-reveal-btn" data-action="ito-next-reveal">' +
+            (gs.revealIndex < room.players.length - 1 ? "次の人へ" : "カードを出すへ進む") + '</button>');
+        }
       }
       html.push('</section>');
       return html.join("");
@@ -713,7 +783,7 @@ const ItoGame = {
 
       html.push('<section class="card"><h2>残り手札</h2><ul class="clue-list ito-hand-status">');
       room.players.forEach(function (p) {
-        const n = this.handCount(gs, p.id);
+        const n = this.handCount(gs, p.id, ctx);
         html.push('<li><strong>' + escapeHtml(p.name) + '</strong>：残り ' + n + ' 枚</li>');
       }, this);
       html.push('</ul></section>');
@@ -745,22 +815,28 @@ const ItoGame = {
 
       html.push('<section class="card"><h2>カードを出す</h2>');
       html.push('<p class="note ito-play-hint">話し合って「今いちばん小さい」と思った人を選び、裏向きでカードを出します</p>');
-      html.push('<div class="ito-play-grid">');
-      room.players.forEach(function (p) {
-        const n = this.handCount(gs, p.id);
-        const disabled = n === 0 ? " disabled" : "";
-        html.push('<button type="button" class="btn btn-secondary ito-play-btn' + disabled + '" data-action="ito-play-card" data-player="' + p.id + '"' + disabled + '>');
-        html.push('<span class="ito-play-card-back" aria-hidden="true"></span>');
-        html.push('<span class="ito-play-card-label">' + escapeHtml(p.name) + ' が出す</span>');
-        if (n > 0) html.push('<span class="ito-play-sub">残り ' + n + ' 枚</span>');
-        html.push('</button>');
-      }, this);
-      html.push('</div>');
+      if (manage) {
+        html.push('<div class="ito-play-grid">');
+        room.players.forEach(function (p) {
+          const n = this.handCount(gs, p.id, ctx);
+          const disabled = n === 0 ? " disabled" : "";
+          html.push('<button type="button" class="btn btn-secondary ito-play-btn' + disabled + '" data-action="ito-play-card" data-player="' + p.id + '"' + disabled + '>');
+          html.push('<span class="ito-play-card-back" aria-hidden="true"></span>');
+          html.push('<span class="ito-play-card-label">' + escapeHtml(p.name) + ' が出す</span>');
+          if (n > 0) html.push('<span class="ito-play-sub">残り ' + n + ' 枚</span>');
+          html.push('</button>');
+        }, this);
+        html.push('</div>');
+      } else {
+        html.push('<p class="note">ホストがカードを選びます。話し合いながら指示してください。</p>');
+      }
 
       html.push('<details class="ito-peek-details"><summary>数字を再確認する</summary><div class="ito-peek-grid">');
       room.players.forEach(function (p) {
-        if (!this.handCount(gs, p.id)) return;
-        html.push('<button type="button" class="btn btn-ghost ito-peek-btn" data-action="ito-peek-player" data-player="' + p.id + '">' + escapeHtml(p.name) + ' の数字</button>');
+        if (!this.handCount(gs, p.id, ctx)) return;
+        if (this.isRemoteRoom(room) && !manage && ctx.me && p.id !== ctx.me.id) return;
+        html.push('<button type="button" class="btn btn-ghost ito-peek-btn" data-action="ito-peek-player" data-player="' + p.id + '">' +
+          (ctx.me && p.id === ctx.me.id ? "自分の数字" : escapeHtml(p.name) + " の数字") + '</button>');
       }, this);
       html.push('</div>');
       html.push('<div id="peekArea" class="hidden secret-panel ito-secret-panel"></div>');

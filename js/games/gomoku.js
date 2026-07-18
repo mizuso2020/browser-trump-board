@@ -218,6 +218,12 @@ const GomokuGame = {
 
     if (!gs.finished && current) {
       html += this.renderTurnNote(ctx, current, this.colorLabel(gs.turn));
+      if (blackPlayer && whitePlayer) {
+        html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
+          turnPlayerId: current.id,
+          orderIds: [blackPlayer.id, whitePlayer.id]
+        });
+      }
     }
 
     html += '<div class="gomoku-board-wrap">';

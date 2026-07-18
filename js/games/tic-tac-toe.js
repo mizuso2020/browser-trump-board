@@ -181,10 +181,13 @@ const TicTacToeGame = {
 
     if (!gs.finished && current) {
       html += this.renderTurnNote(ctx, current, this.markLabel(gs.turn));
+      if (circlePlayer && crossPlayer) {
+        html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
+          turnPlayerId: current.id,
+          orderIds: [circlePlayer.id, crossPlayer.id]
+        });
+      }
     }
-
-    html += '<div class="vttt-meta">';
-    html += "<span>〇 " + circleCount + " · × " + crossCount + "</span>";
     html += "</div>";
 
     html += '<div class="vttt-board-wrap">';

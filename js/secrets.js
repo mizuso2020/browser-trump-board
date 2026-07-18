@@ -5,7 +5,7 @@
 const Secrets = {
   stripFromRoom: function (room) {
     const copy = JSON.parse(JSON.stringify(room));
-    const hostSecrets = { numbers: null, roles: null, hands: null, words: null };
+    const hostSecrets = { numbers: null, roles: null, hands: null, words: null, holeCards: null, deck: null };
     const playerSecrets = {};
 
     if (!copy.gameState) {
@@ -24,7 +24,7 @@ const Secrets = {
     }
 
     if (gs.roles) {
-      if (copy.phase === "wolf_end" || copy.phase === "wordwolf_end") {
+      if (copy.phase === "wolf_end" || copy.phase === "wordwolf_end" || copy.phase === "draw_werewolf_end") {
         gs.revealedRoles = Object.assign({}, gs.roles);
       }
       hostSecrets.roles = gs.roles;
@@ -42,9 +42,23 @@ const Secrets = {
     }
 
     if (gs.hands) {
+      if (copy.game === "ito") {
+        gs.handCounts = {};
+        Object.keys(gs.hands).forEach(function (pid) {
+          gs.handCounts[pid] = (gs.hands[pid] || []).length;
+        });
+      }
       // matryoshka_ttt: hands are keyed by owner (1/2), not player id — keep on public state
       if (copy.game !== "oldmaid" && copy.game !== "sevens" && copy.game !== "matryoshka_ttt") {
         hostSecrets.hands = gs.hands;
+        if (copy.game === "skull") {
+          hostSecrets.skullTypes = hostSecrets.skullTypes || {};
+          Object.keys(gs.hands).forEach(function (pid) {
+            (gs.hands[pid] || []).forEach(function (card) {
+              if (card.type) hostSecrets.skullTypes[card.id] = card.type;
+            });
+          });
+        }
         Object.keys(gs.hands).forEach(function (pid) {
           playerSecrets[pid] = playerSecrets[pid] || {};
           playerSecrets[pid].hand = gs.hands[pid];
@@ -54,7 +68,7 @@ const Secrets = {
     }
 
     if (gs.words) {
-      if (copy.phase === "wordwolf_end") {
+      if (copy.phase === "wordwolf_end" || copy.phase === "draw_werewolf_end") {
         gs.revealedWords = Object.assign({}, gs.words);
       }
       hostSecrets.words = gs.words;
@@ -65,17 +79,63 @@ const Secrets = {
       delete gs.words;
     }
 
-    if (gs.card && copy.game === "ngword") {
-      hostSecrets.ngCard = gs.card;
-      const explainerId = gs.explainerId;
-      if (explainerId) {
-        playerSecrets[explainerId] = playerSecrets[explainerId] || {};
-        playerSecrets[explainerId].ngCard = gs.card;
+    if (gs.ngWords && copy.game === "ngword") {
+      if (copy.phase === "ngword_end") {
+        gs.revealedNgWords = Object.assign({}, gs.ngWords);
       }
-      delete gs.card;
+      hostSecrets.ngWords = gs.ngWords;
+      Object.keys(gs.ngWords).forEach(function (pid) {
+        const others = {};
+        Object.keys(gs.ngWords).forEach(function (otherId) {
+          if (otherId !== pid) {
+            others[otherId] = gs.ngWords[otherId];
+          }
+        });
+        playerSecrets[pid] = playerSecrets[pid] || {};
+        playerSecrets[pid].ngOthers = others;
+      });
+      delete gs.ngWords;
+    }
+
+    if (gs.holeCards && PokerUtils.isPokerGame(copy.game)) {
+      hostSecrets.holeCards = gs.holeCards;
+      Object.keys(gs.holeCards).forEach(function (pid) {
+        playerSecrets[pid] = playerSecrets[pid] || {};
+        playerSecrets[pid].holeCards = gs.holeCards[pid];
+      });
+      delete gs.holeCards;
+    }
+
+    if (gs.deck && (PokerUtils.isPokerGame(copy.game) || copy.game === "blackjack")) {
+      hostSecrets.deck = gs.deck;
+      delete gs.deck;
+    }
+
+    if (gs.bj && copy.game === "blackjack") {
+      hostSecrets.bjStates = gs.bj;
+      Object.keys(gs.bj).forEach(function (pid) {
+        playerSecrets[pid] = playerSecrets[pid] || {};
+        playerSecrets[pid].bjState = gs.bj[pid];
+        gs.bj[pid] = BlackjackGame.stripPublicPlayer(gs.bj[pid]);
+      });
     }
 
     return { room: copy, hostSecrets: hostSecrets, playerSecrets: playerSecrets };
+  },
+
+  /** オンライン時の手札取得（秘密情報 → 公開 hands の順） */
+  getTrumpHand: function (ctx, playerId) {
+    if (playerId === ctx.me.id && ctx.secrets && ctx.secrets.hand) {
+      return ctx.secrets.hand;
+    }
+    if (ctx.hostSecrets && ctx.hostSecrets.hands && ctx.hostSecrets.hands[playerId]) {
+      return ctx.hostSecrets.hands[playerId];
+    }
+    const gs = ctx.room && ctx.room.gameState;
+    if (gs && gs.hands && gs.hands[playerId]) {
+      return gs.hands[playerId];
+    }
+    return [];
   },
 
   getNumber: function (ctx, playerId) {

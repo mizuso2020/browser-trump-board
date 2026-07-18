@@ -3,6 +3,9 @@
  */
 
 const RoomQr = {
+  _cachedUrl: "",
+  _cachedDataUrl: "",
+
   buildJoinUrl: function (code, options) {
     options = options || {};
     const game = options.game || sessionStorage.getItem("partyGames_pendingGame") || "werewolf";
@@ -17,6 +20,18 @@ const RoomQr = {
 
   render: function (container, url) {
     if (!container) return;
+
+    if (url && url === this._cachedUrl && this._cachedDataUrl) {
+      container.innerHTML = "";
+      const img = document.createElement("img");
+      img.src = this._cachedDataUrl;
+      img.className = "lobby-qr-canvas";
+      img.alt = "参加用QRコード";
+      container.setAttribute("role", "img");
+      container.setAttribute("aria-label", "参加用QRコード");
+      container.appendChild(img);
+      return;
+    }
 
     container.innerHTML = "";
 
@@ -39,7 +54,16 @@ const RoomQr = {
       });
 
       const visual = container.querySelector("canvas, img");
-      if (visual) visual.className = "lobby-qr-canvas";
+      if (visual) {
+        visual.className = "lobby-qr-canvas";
+        if (visual.tagName === "CANVAS") {
+          this._cachedUrl = url;
+          this._cachedDataUrl = visual.toDataURL("image/png");
+        } else if (visual.src) {
+          this._cachedUrl = url;
+          this._cachedDataUrl = visual.src;
+        }
+      }
     } catch (err) {
       container.innerHTML = '<p class="note">QRコードを表示できません</p>';
     }

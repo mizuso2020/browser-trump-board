@@ -188,7 +188,14 @@ const SevenStudGame = {
 
     const streetNames = { third: "3rdストリート", fourth: "4th", fifth: "5th", sixth: "6th", river: "7th（リバー）" };
     html.push('<div class="phase-banner"><h2>セブンカード・スタッド</h2>');
-    html.push('<p>' + (streetNames[gs.street] || gs.street) + '　ハンド #' + gs.handNumber + '</p></div>');
+    html.push('<p>' + (streetNames[gs.street] || gs.street) + '　ハンド #' + gs.handNumber + '</p>');
+    if (gs.turnPlayerId && room.phase === "poker_bet") {
+      html.push(TrumpUi.renderTurnOrderBlock(room, gs, {
+        folded: gs.folded || [],
+        orderIds: gs.inHand || null
+      }));
+    }
+    html.push('</div>');
 
     html.push(PokerUtils.renderChipTable(room, gs));
 

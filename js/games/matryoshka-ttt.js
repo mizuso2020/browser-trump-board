@@ -434,6 +434,13 @@ const MatryoshkaTttGame = {
     html += "</div>";
 
     if (!gs.finished && current) {
+      html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
+        turnPlayerId: current.id,
+        orderIds: (room.players || []).map(function (p) { return p.id; })
+      });
+    }
+
+    if (!gs.finished && current) {
       if (!this.isRemoteRoom(ctx.room)) {
         html += '<p class="mttt-turn-note"><strong>' + escapeHtml(current.name) + "（" + this.ownerLabel(gs.turn) + "）</strong> の番です。";
       } else if (this.isMyTurn(ctx)) {

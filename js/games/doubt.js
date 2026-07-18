@@ -11,15 +11,15 @@ const DoubtGame = {
 
   SUITS: ["spade", "heart", "diamond", "club"],
   SUIT_LABEL: { spade: "♠", heart: "♥", diamond: "♦", club: "♣" },
-  RANK_LABEL: { 11: "J", 12: "Q", 13: "K", 14: "A", 15: "2" },
-  RANK_SEQUENCE: [14, 15, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
+  RANK_LABEL: { 11: "J", 12: "Q", 13: "K" },
+  RANK_SEQUENCE: [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13],
 
   init: function (room) {
-    const deck = shuffle(this._createDeck());
-    const hands = this._deal(room.players, deck);
+    const deck = shuffle(PlayingCards.createDeck54());
+    const hands = PlayingCards.dealEvenly(room.players, deck);
 
     Object.keys(hands).forEach(function (pid) {
-      hands[pid].sort(function (a, b) { return a.rank - b.rank; });
+      PlayingCards.sortHandByRank(hands[pid]);
     });
 
     room.gameState = {
@@ -35,30 +35,6 @@ const DoubtGame = {
     return room;
   },
 
-  _createDeck: function () {
-    const deck = [];
-    this.SUITS.forEach(function (suit) {
-      for (let rank = 3; rank <= 15; rank++) {
-        deck.push({ id: suit + rank, suit: suit, rank: rank });
-      }
-    });
-    return deck;
-  },
-
-  _deal: function (players, deck) {
-    const hands = {};
-    const n = players.length;
-    const base = Math.floor(52 / n);
-    const extra = 52 % n;
-    let idx = 0;
-    players.forEach(function (p, i) {
-      const count = base + (i < extra ? 1 : 0);
-      hands[p.id] = deck.slice(idx, idx + count);
-      idx += count;
-    });
-    return hands;
-  },
-
   _rankName: function (rank) {
     return this.RANK_LABEL[rank] || String(rank);
   },
@@ -71,13 +47,7 @@ const DoubtGame = {
     if (!ctx.isOnline) {
       return ctx.room.gameState.hands[playerId] || [];
     }
-    if (playerId === ctx.me.id && ctx.secrets && ctx.secrets.hand) {
-      return ctx.secrets.hand;
-    }
-    if (ctx.hostSecrets && ctx.hostSecrets.hands) {
-      return ctx.hostSecrets.hands[playerId] || [];
-    }
-    return [];
+    return Secrets.getTrumpHand(ctx, playerId);
   },
 
   _actingPlayer: function (ctx) {
@@ -183,7 +153,7 @@ const DoubtGame = {
     }
 
     const play = gs.lastPlay;
-    const wasTruth = play.cards.every(function (c) { return c.rank === play.claimedRank; });
+    const wasTruth = play.cards.every(function (c) { return !c.isJoker && c.rank === play.claimedRank; });
     const wasLie = !wasTruth;
     const loserId = wasLie ? play.playerId : doubterId;
 
@@ -238,20 +208,13 @@ const DoubtGame = {
   },
 
   _cardHtml: function (card, selected, selectable, faceDown) {
-    if (faceDown) {
-      return '<div class="playing-card card-back">🂠</div>';
-    }
-    const suitClass = "card-suit-" + card.suit;
-    const sel = selected ? " is-selected" : "";
-    const r = this.RANK_LABEL[card.rank] || card.rank;
-    return (
-      '<button type="button" class="playing-card ' + suitClass + sel + '" ' +
-      'data-action="doubt-toggle" data-card="' + card.id + '" ' +
-      (selectable ? "" : "disabled") + '>' +
-      '<span class="card-rank">' + r + '</span>' +
-      '<span class="card-suit">' + this.SUIT_LABEL[card.suit] + '</span>' +
-      '</button>'
-    );
+    return PlayingCards.cardHtml(card, {
+      faceDown: faceDown,
+      selected: selected,
+      disabled: !selectable,
+      action: "doubt-toggle",
+      data: { card: card.id }
+    });
   },
 
   render: function (ctx) {
@@ -286,6 +249,9 @@ const DoubtGame = {
     } else {
       html.push('<p>ダウトできますか？</p>');
     }
+    if (room.phase === "doubt_play") {
+      html.push(TrumpUi.renderTurnOrderBlock(room, gs));
+    }
     html.push('</div>');
 
     if (!ctx.isOnline && room.phase === "doubt_play") {
@@ -314,14 +280,14 @@ const DoubtGame = {
       html.push('<p class="note">' + escapeHtml(lp.name) + ' が <strong>' + gs.lastPlay.count + '枚</strong> を【' + this._rankName(gs.lastPlay.claimedRank) + '】として出しました</p>');
       html.push('<div class="table-cards">');
       for (let i = 0; i < gs.lastPlay.count; i++) {
-        html.push('<div class="playing-card card-back">🂠</div>');
+        html.push(PlayingCards.cardHtml(null, { faceDown: true, asButton: false }));
       }
       html.push('</div>');
     } else if (gs.pile.length) {
       html.push('<p class="note">場に ' + gs.pile.length + ' 枚</p>');
       html.push('<div class="table-cards">');
       for (let i = 0; i < Math.min(gs.pile.length, 8); i++) {
-        html.push('<div class="playing-card card-back">🂠</div>');
+        html.push(PlayingCards.cardHtml(null, { faceDown: true, asButton: false }));
       }
       if (gs.pile.length > 8) html.push('<span class="note">…他 ' + (gs.pile.length - 8) + '枚</span>');
       html.push('</div>');
@@ -354,7 +320,7 @@ const DoubtGame = {
     }
 
     if (room.phase === "doubt_play" && !gs.finished.includes(actingId)) {
-      html.push('<section class="card"><h2>手札（' + escapeHtml(turnPlayer.name) + '） <small>' + viewHand.length + '枚</small></h2>');
+      html.push('<section class="card"><h2>手札 <small>' + viewHand.length + '枚</small></h2>');
 
       if (this.isMyTurn(ctx)) {
         html.push('<p class="note">【' + this._rankName(claimRank) + '】として 1〜4枚選んで出す（嘘でもOK）</p>');
@@ -384,12 +350,19 @@ const DoubtGame = {
       html.push('</section>');
     }
 
-    html.push('<section class="card"><h2>ルール（簡易）</h2><ul class="clue-list" style="font-size:0.85rem;color:var(--text-dim)">');
-    html.push('<li>順番に <strong>1〜4枚</strong> を裏向きで出し、宣言ランク（A→2→3…K）を名乗る</li>');
-    html.push('<li>嘘でもOK。他の人が <strong>ダウト</strong> できる</li>');
-    html.push('<li>嘘がバレたら出した人が場を引き取る。本当ならダウトした人が引き取る</li>');
-    html.push('<li>手札を全てなくした人の勝ち</li>');
-    html.push('</ul></section>');
+    html.push(TrumpUi.renderFooter({
+      rulesAction: "doubt-rules-toggle"
+    }));
+    html.push(TrumpUi.renderRulesPanel(
+      "doubtRulesPanel",
+      "ルール",
+      '<ul class="clue-list trump-rules-list">' +
+      "<li>順番に <strong>1〜4枚</strong> を裏向きで出し、宣言ランク（A→2→3…K）を名乗る</li>" +
+      "<li>嘘でもOK。他の人が <strong>ダウト</strong> できる</li>" +
+      "<li>嘘がバレたら出した人が場を引き取る。本当ならダウトした人が引き取る</li>" +
+      "<li>手札を全てなくした人の勝ち</li>" +
+      "</ul>"
+    ));
 
     return html.join("");
   }

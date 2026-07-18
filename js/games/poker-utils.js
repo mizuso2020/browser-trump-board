@@ -44,17 +44,11 @@ const PokerUtils = {
   },
 
   cardHtml: function (card, faceDown, small) {
-    if (faceDown) {
-      return '<div class="playing-card card-back' + (small ? " poker-card-sm" : "") + '">🂠</div>';
-    }
-    const suitClass = "card-suit-" + card.suit;
-    const r = this.RANK_LABEL[card.rank] || card.rank;
-    return (
-      '<div class="playing-card ' + suitClass + (small ? " poker-card-sm" : "") + '">' +
-      '<span class="card-rank">' + r + '</span>' +
-      '<span class="card-suit">' + this.SUIT_LABEL[card.suit] + '</span>' +
-      '</div>'
-    );
+    return PlayingCards.cardHtml(card, {
+      faceDown: faceDown,
+      small: small,
+      asButton: false
+    });
   },
 
   initChips: function (players, amount) {
@@ -220,10 +214,38 @@ const PokerUtils = {
 
   getHoleCards: function (ctx, playerId) {
     const gs = ctx.room.gameState;
-    if (!gs.holeCards) return [];
-    const cards = gs.holeCards[playerId] || [];
-    if (playerId === ctx.me.id || !ctx.isOnline) return cards;
+    if (!ctx.isOnline) {
+      if (!gs || !gs.holeCards) return [];
+      return gs.holeCards[playerId] || [];
+    }
+    if (playerId === ctx.me.id && ctx.secrets && ctx.secrets.holeCards) {
+      return ctx.secrets.holeCards;
+    }
+    if (ctx.hostSecrets && ctx.hostSecrets.holeCards) {
+      return ctx.hostSecrets.holeCards[playerId] || [];
+    }
     return [];
+  },
+
+  attachHostSecrets: function (room, hostSecrets) {
+    const gs = room && room.gameState;
+    if (!gs || !hostSecrets) return false;
+    let attached = false;
+    if (hostSecrets.holeCards) {
+      gs.holeCards = JSON.parse(JSON.stringify(hostSecrets.holeCards));
+      attached = true;
+    }
+    if (hostSecrets.deck) {
+      gs.deck = hostSecrets.deck.slice();
+      attached = true;
+    }
+    return attached;
+  },
+
+  syncHostSecretsFromState: function (gs, hostSecrets) {
+    if (!gs || !hostSecrets) return;
+    if (gs.holeCards) hostSecrets.holeCards = gs.holeCards;
+    if (gs.deck) hostSecrets.deck = gs.deck;
   },
 
   playerName: function (room, id) {
@@ -237,9 +259,28 @@ const PokerUtils = {
     });
   },
 
+  normalizeBettingState: function (gs) {
+    if (!gs) return;
+    gs.currentBet = Number(gs.currentBet) || 0;
+    gs.pot = Number(gs.pot) || 0;
+    gs.bigBlind = Number(gs.bigBlind) || PokerUtils.BIG_BLIND;
+    gs.smallBlind = Number(gs.smallBlind) || PokerUtils.SMALL_BLIND;
+    if (!gs.streetBets || typeof gs.streetBets !== "object") {
+      gs.streetBets = {};
+    }
+    Object.keys(gs.streetBets).forEach(function (key) {
+      gs.streetBets[key] = Number(gs.streetBets[key]) || 0;
+    });
+    if (!gs.actedThisStreet || typeof gs.actedThisStreet !== "object") {
+      gs.actedThisStreet = {};
+    }
+  },
+
   amountToCall: function (gs, playerId) {
-    const bet = gs.streetBets[playerId] || 0;
-    return Math.max(0, gs.currentBet - bet);
+    this.normalizeBettingState(gs);
+    const bet = Number(gs.streetBets[playerId] || 0);
+    const current = Number(gs.currentBet || 0);
+    return Math.max(0, current - bet);
   },
 
   canCheck: function (gs, playerId) {
@@ -312,7 +353,12 @@ const PokerUtils = {
     if (action === "call") {
       const toCall = PokerUtils.amountToCall(gs, playerId);
       if (toCall <= 0) {
-        return { ok: false, error: "コールするベットがありません" };
+        if (!PokerUtils.canCheck(gs, playerId)) {
+          return { ok: false, error: "コールするベットがありません" };
+        }
+        gs.actedThisStreet[playerId] = true;
+        gs.lastAction = { playerId: playerId, action: "check" };
+        return { ok: true };
       }
       PokerUtils.placeBet(gs, playerId, toCall);
       gs.actedThisStreet[playerId] = true;

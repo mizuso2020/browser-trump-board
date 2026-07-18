@@ -11,14 +11,15 @@ const OldMaidGame = {
 
   SUITS: ["spade", "heart", "diamond", "club"],
   SUIT_LABEL: { spade: "♠", heart: "♥", diamond: "♦", club: "♣" },
-  RANK_LABEL: { 11: "J", 12: "Q", 13: "K", 14: "A" },
+  RANK_LABEL: { 11: "J", 12: "Q", 13: "K" },
 
   init: function (room) {
-    const deck = shuffle(this._createDeck());
-    const hands = this._deal(room.players, deck);
+    const deck = shuffle(PlayingCards.createDeck54());
+    const hands = PlayingCards.dealEvenly(room.players, deck);
 
     Object.keys(hands).forEach(function (pid) {
       hands[pid] = OldMaidGame._removeAllPairs(hands[pid]);
+      PlayingCards.sortHandByRank(hands[pid]);
     });
 
     room.gameState = {
@@ -30,27 +31,6 @@ const OldMaidGame = {
     };
     room.phase = "oldmaid_play";
     return room;
-  },
-
-  _createDeck: function () {
-    const deck = [{ id: "joker", isJoker: true, suit: null, rank: null }];
-    this.SUITS.forEach(function (suit) {
-      for (let rank = 1; rank <= 13; rank++) {
-        deck.push({ id: suit + rank, suit: suit, rank: rank, isJoker: false });
-      }
-    });
-    return deck;
-  },
-
-  _deal: function (players, deck) {
-    const hands = {};
-    players.forEach(function (p) { hands[p.id] = []; });
-    let i = 0;
-    deck.forEach(function (card) {
-      hands[players[i % players.length].id].push(card);
-      i += 1;
-    });
-    return hands;
   },
 
   _removeAllPairs: function (hand) {
@@ -79,13 +59,7 @@ const OldMaidGame = {
     if (!ctx.isOnline) {
       return ctx.room.gameState.hands[playerId] || [];
     }
-    if (playerId === ctx.me.id && ctx.secrets && ctx.secrets.hand) {
-      return ctx.secrets.hand;
-    }
-    if (ctx.hostSecrets && ctx.hostSecrets.hands) {
-      return ctx.hostSecrets.hands[playerId] || [];
-    }
-    return [];
+    return Secrets.getTrumpHand(ctx, playerId);
   },
 
   _actingPlayer: function (ctx) {
@@ -166,20 +140,11 @@ const OldMaidGame = {
   },
 
   _cardHtml: function (card, faceDown) {
-    if (faceDown) {
-      return '<div class="playing-card card-back">🂠</div>';
-    }
-    if (card.isJoker) {
-      return '<div class="playing-card card-joker">🃏<span class="card-rank">ババ</span></div>';
-    }
-    const suitClass = "card-suit-" + card.suit;
-    const r = this.RANK_LABEL[card.rank] || card.rank;
-    return (
-      '<div class="playing-card ' + suitClass + '">' +
-      '<span class="card-rank">' + r + '</span>' +
-      '<span class="card-suit">' + this.SUIT_LABEL[card.suit] + '</span>' +
-      '</div>'
-    );
+    return PlayingCards.cardHtml(card, {
+      faceDown: faceDown,
+      asButton: false,
+      joker: "red"
+    });
   },
 
   render: function (ctx) {
@@ -211,7 +176,9 @@ const OldMaidGame = {
     const myHand = this.getHand(ctx, actingId);
 
     html.push('<div class="phase-banner"><h2>ババ抜き</h2>');
-    html.push('<p>ターン：<strong>' + escapeHtml(turnPlayer.name) + '</strong></p></div>');
+    html.push('<p>ターン：<strong>' + escapeHtml(turnPlayer.name) + '</strong></p>');
+    html.push(TrumpUi.renderTurnOrderBlock(room, gs));
+    html.push('</div>');
 
     if (!ctx.isOnline) {
       html.push('<section class="card"><p class="note">📱 <strong>' + escapeHtml(turnPlayer.name) + '</strong> さんの番。端末を渡してください。</p></section>');
@@ -230,7 +197,11 @@ const OldMaidGame = {
       html.push('<section class="card"><h2>' + escapeHtml(target.name) + ' から1枚引く</h2>');
       html.push('<p class="note">裏向きのカードを1枚選んでください</p><div class="hand-row">');
       targetHand.forEach(function (c, i) {
-        html.push('<button type="button" class="playing-card card-back" data-action="om-draw" data-index="' + i + '">🂠</button>');
+        html.push(PlayingCards.cardHtml(c, {
+          faceDown: true,
+          action: "om-draw",
+          data: { index: i }
+        }));
       });
       html.push('</div></section>');
     } else if (ctx.isOnline) {
@@ -250,19 +221,26 @@ const OldMaidGame = {
       } else if (hand.length) {
         html.push('<div class="hand-row">');
         for (let i = 0; i < hand.length; i++) {
-          html.push('<div class="playing-card card-back">🂠</div>');
+          html.push(PlayingCards.cardHtml(null, { faceDown: true, asButton: false }));
         }
         html.push('</div>');
       }
     });
     html.push('</section>');
 
-    html.push('<section class="card"><h2>ルール</h2><ul class="clue-list" style="font-size:0.85rem;color:var(--text-dim)">');
-    html.push('<li>最初にペア（同じ数字2枚）を自動で捨てる</li>');
-    html.push('<li>順番に隣の人の手札から1枚引く（ジョーカー＝ババはペアにならない）</li>');
-    html.push('<li>引いたらペアができたら捨てる。手札ゼロになった人は抜け</li>');
-    html.push('<li>最後にババが残った人の負け</li>');
-    html.push('</ul></section>');
+    html.push(TrumpUi.renderFooter({
+      rulesAction: "om-rules-toggle"
+    }));
+    html.push(TrumpUi.renderRulesPanel(
+      "omRulesPanel",
+      "ルール",
+      '<ul class="clue-list trump-rules-list">' +
+      "<li>最初にペア（同じ数字2枚）を自動で捨てる</li>" +
+      "<li>順番に隣の人の手札から1枚引く（ジョーカー＝ババはペアにならない）</li>" +
+      "<li>引いたらペアができたら捨てる。手札ゼロになった人は抜け</li>" +
+      "<li>最後にババが残った人の負け</li>" +
+      "</ul>"
+    ));
 
     return html.join("");
   }

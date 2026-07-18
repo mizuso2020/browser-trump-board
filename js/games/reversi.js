@@ -247,6 +247,12 @@ const ReversiGame = {
 
     if (!gs.finished && current) {
       html += this.renderTurnNote(ctx, current, this.colorLabel(gs.turn));
+      if (blackPlayer && whitePlayer) {
+        html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
+          turnPlayerId: current.id,
+          orderIds: [blackPlayer.id, whitePlayer.id]
+        });
+      }
     }
 
     html += '<div class="reversi-board" role="grid" aria-label="オセロ盤">';

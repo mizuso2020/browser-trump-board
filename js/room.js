@@ -20,6 +20,8 @@ let pollTimer = null;
 let roomActionLock = false;
 let pendingRoomUpdate = null;
 let discussionTimerId = null;
+let drawTurnTimerId = null;
+let drawTurnAutoSubmitPending = false;
 let lobbyAutoSyncTimer = null;
 let lastSyncError = null;
 let lastServerPhase = null;
@@ -53,6 +55,51 @@ function startDiscussionTimer(endsAt) {
   discussionTimerId = setInterval(tick, 1000);
 }
 
+function clearDrawTurnTimer() {
+  if (drawTurnTimerId) {
+    clearInterval(drawTurnTimerId);
+    drawTurnTimerId = null;
+  }
+}
+
+function startDrawTurnTimer(endsAt, ctx) {
+  clearDrawTurnTimer();
+  drawTurnAutoSubmitPending = false;
+  const el = document.getElementById("dwDrawTimer");
+  if (!el || !endsAt) return;
+
+  function tick() {
+    const left = Math.max(0, endsAt - Date.now());
+    const m = Math.floor(left / 60000);
+    const s = Math.floor((left % 60000) / 1000);
+    el.textContent = m + ":" + String(s).padStart(2, "0");
+    if (el.classList) {
+      el.classList.toggle("is-urgent", left > 0 && left <= 15000);
+    }
+    if (left > 0 || drawTurnAutoSubmitPending) return;
+    drawTurnAutoSubmitPending = true;
+    clearDrawTurnTimer();
+    if (!room || room.game !== "drawing_werewolf" || room.phase !== "draw_werewolf_draw") return;
+    const drawer = DrawingWerewolfGame.getCurrentDrawer(room);
+    if (!drawer) return;
+    const canAuto =
+      room.mode === "local" ||
+      (ctx && ctx.me && ctx.me.id === drawer.id);
+    if (!canAuto) {
+      drawTurnAutoSubmitPending = false;
+      return;
+    }
+    showToast("時間切れ！次の人へ進みます");
+    handleAction("dw-submit-draw", { auto: "1" }, ctx).catch(function (err) {
+      drawTurnAutoSubmitPending = false;
+      showToast(err.message || "自動進行に失敗しました");
+    });
+  }
+
+  tick();
+  drawTurnTimerId = setInterval(tick, 250);
+}
+
 function getLobbyPlayerRange() {
   const prefGameId = getQueryParam("game");
   const prefMeta = prefGameId ? GameRegistry.get(prefGameId) : null;
@@ -64,9 +111,9 @@ function getLobbyPlayerRange() {
     if (g.maxPlayers > max) max = g.maxPlayers;
   });
 
-  let hint = min + "〜" + max + "人で遊べます";
+  let hint = formatPlayerRange(min, max) + "で遊べます";
   if (prefMeta && prefMeta.status === "live") {
-    hint = "選択中の " + prefMeta.name + " は " + prefMeta.minPlayers + "〜" + prefMeta.maxPlayers + "人";
+    hint = "選択中の " + prefMeta.name + " は " + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers);
   }
   return { min: min, max: max, hint: hint };
 }
@@ -189,6 +236,13 @@ async function boot() {
       return;
     }
 
+    if (room.game === "blackjack" && room.gameState && room.gameState.phase && room.phase === "lobby") {
+      room.phase = room.gameState.phase;
+    }
+    if (room.gameStartedAt) {
+      rememberGameStartedAt(room.gameStartedAt);
+    }
+
     if (Sync.isOnline()) {
       await resolvePlayerIdentity(room);
       if (room.phase !== "lobby" && room.game) {
@@ -256,6 +310,16 @@ async function boot() {
         WordWolfGame.ensureLobbySetup(room, preset);
         await Sync.save(room);
       }
+      if (pref === "drawing_werewolf") {
+        const saved = sessionStorage.getItem("partyGames_drawingWerewolfSetup");
+        let preset = null;
+        if (saved) {
+          try { preset = JSON.parse(saved); } catch (e) { preset = null; }
+          sessionStorage.removeItem("partyGames_drawingWerewolfSetup");
+        }
+        DrawingWerewolfGame.ensureLobbySetup(room, preset);
+        await Sync.save(room);
+      }
     }
     pollTimer = Sync.subscribe(roomCode, onRoomUpdate);
     bindRoomSyncRefresh();
@@ -286,7 +350,17 @@ async function loadSecretsWithRetry() {
   if (!room || !room.game) return;
   const needsRole = room.game === "werewolf" && room.phase === "wolf_ready";
   const needsWordwolfSecret = room.game === "wordwolf" && room.phase === "wordwolf_ready";
-  if ((needsRole || needsWordwolfSecret) && (!playerSecret || (needsRole && !playerSecret.role) || (needsWordwolfSecret && !playerSecret.word))) {
+  const needsDrawWolfSecret = room.game === "drawing_werewolf" &&
+    (room.phase === "draw_werewolf_ready" || room.phase === "draw_werewolf_draw");
+  const needsNgOthers = room.game === "ngword" && room.phase === "ngword_play";
+  if (
+    (needsRole || needsWordwolfSecret || needsDrawWolfSecret || needsNgOthers) &&
+    (!playerSecret ||
+      (needsRole && !playerSecret.role) ||
+      (needsWordwolfSecret && !playerSecret.word) ||
+      (needsDrawWolfSecret && !playerSecret.role) ||
+      (needsNgOthers && !playerSecret.ngOthers))
+  ) {
     await new Promise(function (resolve) { setTimeout(resolve, 600); });
     await loadSecrets();
   }
@@ -303,8 +377,35 @@ function roomPublicSnapshot(targetRoom) {
   delete copy._syncedGameState;
   delete copy._syncedAt;
   delete copy._creatorName;
+  delete copy.updatedAt;
+  delete copy.gameStartedAt;
   return JSON.stringify(copy);
 }
+
+function lobbyRenderFingerprint(room, ctx) {
+  if (!room || room.phase !== "lobby" || room.game) return "";
+  const prefGame = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || room.pendingGame || room.game || "";
+  return JSON.stringify({
+    code: room.code,
+    mode: room.mode,
+    players: (room.players || []).map(function (p) {
+      return { id: p.id, name: p.name, isHost: !!p.isHost };
+    }),
+    pendingGame: room.pendingGame || null,
+    lobbyWerewolf: room.lobbyWerewolf || null,
+    lobbyWordwolf: room.lobbyWordwolf || null,
+    lobbyIto: room.lobbyIto || null,
+    lobbyNgword: room.lobbyNgword || null,
+    isHost: !!ctx.isHost,
+    meId: ctx.me ? ctx.me.id : null,
+    prefGame: prefGame,
+    lastSyncError: lastSyncError || "",
+    serverPhase: lastServerPhase || "",
+    serverGame: lastServerGame || null
+  });
+}
+
+let lastLobbyRenderFingerprint = "";
 
 function roomsAreEquivalent(a, b) {
   return roomPublicSnapshot(a) === roomPublicSnapshot(b);
@@ -545,6 +646,10 @@ async function syncRoomFromServer(latest) {
   room = JSON.parse(JSON.stringify(latest));
   markRoomSyncedSnapshot(room);
 
+  if (room.gameState && PokerUtils.isPokerGame(room.game)) {
+    PokerUtils.normalizeBettingState(room.gameState);
+  }
+
   if (room.game === "matryoshka_ttt" && room.gameState) {
     const boardChanged = prevMatryoshkaBoard && JSON.stringify(room.gameState.board) !== prevMatryoshkaBoard;
     const turnChanged = prevMatryoshkaTurn !== null && room.gameState.turn !== prevMatryoshkaTurn;
@@ -555,6 +660,9 @@ async function syncRoomFromServer(latest) {
 
   if (room.game === "werewolf" && room.gameState) {
     WerewolfGame.normalizePhase(room);
+  }
+  if (room.game === "blackjack" && room.gameState && room.gameState.phase && room.phase === "lobby") {
+    room.phase = room.gameState.phase;
   }
   if (!room.game && room.phase === "lobby" && isHost()) {
     WerewolfGame.syncLobbySetupPlayerCount(room);
@@ -652,6 +760,34 @@ function buildCtx() {
   return ctx;
 }
 
+async function withOnlineMutation(fn) {
+  if (!Sync.isOnline()) return fn();
+  roomActionLock = true;
+  try {
+    return await fn();
+  } finally {
+    if (roomActionLock) {
+      roomActionLock = false;
+      flushPendingRoomUpdate();
+    }
+  }
+}
+
+async function persistPlayerHand(ctx, newHand) {
+  playerSecret = playerSecret || {};
+  playerSecret.hand = newHand;
+  await Sync.updatePlayerSecret(roomCode, ctx.me.id, { hand: newHand });
+  await Sync.patchHostHand(roomCode, ctx.me.id, newHand);
+  if (hostSecrets && hostSecrets.hands) {
+    hostSecrets.hands[ctx.me.id] = newHand;
+  }
+}
+
+async function getRemoteTrumpHand(playerId) {
+  const secret = await Sync.getPlayerSecret(roomCode, playerId);
+  return (secret && secret.hand) || [];
+}
+
 async function saveAndRender(secretBundle) {
   roomActionLock = true;
   let boardAnim = null;
@@ -662,7 +798,10 @@ async function saveAndRender(secretBundle) {
     }
 
     const shouldSave = await prepareOnlineSave();
-    if (!shouldSave) return;
+    if (!shouldSave) {
+      render();
+      return;
+    }
 
     let saved = false;
     for (let attempt = 0; attempt < 3 && !saved; attempt++) {
@@ -742,6 +881,23 @@ function render() {
   }
 
   const ctx = buildCtx();
+
+  if (room.game === "texas_holdem" && room.phase === "poker_street_pending" && ctx.isHost) {
+    completePendingPokerStreetAdvance();
+  }
+
+  if (room.game === "texas_holdem" && room.phase === "poker_showdown_pending" && ctx.isHost) {
+    completePendingPokerShowdown();
+  }
+
+  if (room.game === "skull" && ctx.isHost) {
+    completePendingSkullActions();
+  }
+
+  if (room.game === "blackjack" && ctx.isHost) {
+    completePendingBlackjackActions();
+  }
+
   let body = "";
 
   const modeLabel = room.mode === "local"
@@ -757,9 +913,16 @@ function render() {
   body += '<p class="tagline">' + modeLabel + '　' + escapeHtml(me.name) + (ctx.isHost ? '（ホスト）' : '') + '</p></header>';
 
   if (!room.game || room.phase === "lobby") {
+    const lobbyFingerprint = lobbyRenderFingerprint(room, ctx);
+    if (lobbyFingerprint && lobbyFingerprint === lastLobbyRenderFingerprint) {
+      if (room.mode !== "local") renderLobbyQr(room);
+      return;
+    }
+    lastLobbyRenderFingerprint = lobbyFingerprint;
     body += renderLobby(ctx);
     startLobbyAutoSync();
   } else {
+    lastLobbyRenderFingerprint = "";
     clearLobbyAutoSync();
     if (room.game === "ito") {
     body += ItoGame.render(ctx);
@@ -771,6 +934,8 @@ function render() {
     body += DoubtGame.render(ctx);
   } else if (room.game === "wordwolf") {
     body += WordWolfGame.render(ctx);
+  } else if (room.game === "drawing_werewolf") {
+    body += DrawingWerewolfGame.render(ctx);
   } else if (room.game === "ngword") {
     body += NgWordGame.render(ctx);
   } else if (room.game === "coyote") {
@@ -781,6 +946,12 @@ function render() {
     body += OldMaidGame.render(ctx);
   } else if (room.game === "sevens") {
     body += SevensGame.render(ctx);
+  } else if (room.game === "ninetyNine") {
+    body += NinetyNineGame.render(ctx);
+  } else if (room.game === "skull") {
+    body += SkullGame.render(ctx);
+  } else if (room.game === "blackjack") {
+    body += BlackjackGame.render(ctx);
   } else if (room.game === "texas_holdem") {
     body += TexasHoldemGame.render(ctx);
   } else if (room.game === "seven_stud") {
@@ -819,6 +990,10 @@ function render() {
   app.innerHTML = body;
   bindEvents(ctx);
 
+  if (room.game === "daifugo" && typeof DaifugoGame.scheduleAutoPassIfNeeded === "function") {
+    DaifugoGame.scheduleAutoPassIfNeeded(ctx);
+  }
+
   if ((!room.game || room.phase === "lobby") && room.mode !== "local") {
     renderLobbyQr(room);
   }
@@ -830,6 +1005,17 @@ function render() {
   if (room.phase === "wordwolf_discuss" && room.gameState && room.gameState.discussionEndsAt) {
     startDiscussionTimer(room.gameState.discussionEndsAt);
   }
+  if (room.phase === "draw_werewolf_discuss" && room.gameState && room.gameState.discussionEndsAt) {
+    startDiscussionTimer(room.gameState.discussionEndsAt);
+  }
+  if (room.phase === "draw_werewolf_draw" && room.gameState && room.gameState.drawTurnEndsAt) {
+    startDrawTurnTimer(room.gameState.drawTurnEndsAt, ctx);
+  } else {
+    clearDrawTurnTimer();
+  }
+  if (room.game === "drawing_werewolf" && typeof DrawingWerewolfGame.afterRender === "function") {
+    DrawingWerewolfGame.afterRender();
+  }
   if (room.game === "shogi" && typeof ShogiGame.afterRender === "function") {
     ShogiGame.afterRender(render);
   }
@@ -837,7 +1023,7 @@ function render() {
 
 async function tryAutoStartPreferredGame() {
   const gameId = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame");
-  if (!gameId || gameId === "werewolf" || gameId === "wordwolf" || !isHost() || room.phase !== "lobby" || room.game) return;
+  if (!gameId || gameId === "werewolf" || gameId === "wordwolf" || gameId === "drawing_werewolf" || !isHost() || room.phase !== "lobby" || room.game) return;
 
   const game = getGameModule(gameId);
   const meta = GameRegistry.get(gameId);
@@ -847,7 +1033,12 @@ async function tryAutoStartPreferredGame() {
 
   const ok = room.players.length >= meta.minPlayers && room.players.length <= meta.maxPlayers;
   if (!ok) {
-    showToast(meta.name + " は " + meta.minPlayers + "〜" + meta.maxPlayers + "人です。人数を " + meta.minPlayers + "〜" + meta.maxPlayers + " に合わせてください（現在 " + room.players.length + "人）");
+    showToast(meta.name + " は " + formatPlayerRange(meta.minPlayers, meta.maxPlayers) + "です。人数を " + formatPlayerRange(meta.minPlayers, meta.maxPlayers) + " に合わせてください（現在 " + room.players.length + "人）");
+    return;
+  }
+
+  if ((gameId === "daifugo" || gameId === "texas_holdem" || gameId === "ninetyNine" || gameId === "skull" || gameId === "blackjack" || gameId === "ito" || gameId === "shogi") && room.mode !== "room") {
+    showToast(meta.name + " は各自のスマホモードのみ対応です");
     return;
   }
 
@@ -867,6 +1058,8 @@ async function tryAutoStartPreferredGame() {
     if (room.game === "daifugo") DaifugoGame.clearSelected();
     if (room.game === "doubt") DoubtGame.clearSelected();
     if (room.game === "sevens") SevensGame.clearSelected();
+    if (room.game === "ninetyNine") NinetyNineGame.clearSelected();
+    if (room.game === "skull") SkullGame.clearSelected();
     if (room.game === "five_draw") FiveDrawGame.clearSelected();
 
     if (Sync.isOnline()) {
@@ -900,7 +1093,7 @@ function renderLobbyCodeCard(code) {
       '<p class="lobby-code-value">' + escapeHtml(code) + '</p>' +
       '<div id="lobbyQrCode" class="lobby-qr-wrap"></div>' +
       '<a id="lobbyJoinUrl" class="lobby-join-url hidden" target="_blank" rel="noopener noreferrer"></a>' +
-      '<p class="lobby-code-hint">QRコードを読み取るか、下のリンクをタップして参加してもらおう<br><span class="lobby-brave-note">Brave利用時は初回のみ「詳細設定」→「続行」で証明書を許可してください</span></p>' +
+      '<p class="lobby-code-hint">QRコードを読み取るか、下のリンクをタップして参加してもらおう</p>' +
     '</section>'
   );
 }
@@ -931,6 +1124,8 @@ function isModeAvailableForGame(meta, roomMode) {
 var FINISHED_GAME_PHASES = {
   wolf_end: true,
   wordwolf_end: true,
+  draw_werewolf_end: true,
+  ngword_end: true,
   ito_gameover: true,
   ito_victory: true,
   poker_result: true,
@@ -939,7 +1134,10 @@ var FINISHED_GAME_PHASES = {
   doubt_result: true,
   oldmaid_result: true,
   coyote_result: true,
-  sevens_result: true
+  sevens_result: true,
+  ninety_nine_result: true,
+  skull_result: true,
+  bj_game_over: true
 };
 
 function isGameFinished(targetRoom) {
@@ -947,6 +1145,7 @@ function isGameFinished(targetRoom) {
   const gs = targetRoom.gameState;
   if (gs && gs.finished === true) return true;
   if (gs && gs.gameOver === true) return true;
+  if (targetRoom.game === "blackjack" && gs && gs.phase === "bj_game_over") return true;
   return !!FINISHED_GAME_PHASES[targetRoom.phase];
 }
 
@@ -989,6 +1188,7 @@ function getBoardMarkHint(gameId, targetRoom, me) {
   if (gameId === "matryoshka_ttt") return idx === 0 ? "赤（先手）" : "青（後攻）";
   if (gameId === "tic_tac_toe" || gameId === "vanishing_ttt") return idx === 0 ? "〇（先攻）" : "×（後攻）";
   if (gameId === "reversi" || gameId === "gomoku") return idx === 0 ? "黒（先手）" : "白（後攻）";
+  if (gameId === "shogi") return idx === 0 ? "先手（▲）" : "後手（△）";
   return "";
 }
 
@@ -998,26 +1198,12 @@ function renderLobby(ctx) {
   const prefMeta = prefGame ? GameRegistry.get(prefGame) : null;
   const isWerewolfLobby = prefMeta && prefMeta.id === "werewolf" && prefMeta.status === "live";
   const isWordwolfLobby = prefMeta && prefMeta.id === "wordwolf" && prefMeta.status === "live";
+  const isDrawingWerewolfLobby = prefMeta && prefMeta.id === "drawing_werewolf" && prefMeta.status === "live";
   const isItoLobby = prefMeta && prefMeta.id === "ito" && prefMeta.status === "live";
+  const isNgwordLobby = prefMeta && prefMeta.id === "ngword" && prefMeta.status === "live";
 
   if (ctx.room.mode !== "local" && ctx.isHost) {
     html.push(renderLobbyCodeCard(ctx.room.code));
-  }
-
-  if (!ctx.isHost && ctx.room.mode !== "local" && room.phase === "lobby") {
-    html.push('<section class="card lobby-wait-card">');
-    html.push('<p class="lobby-wait-title">待機中</p>');
-    html.push('<p class="lobby-wait-msg">ホストの準備が終わるまでお待ちください</p>');
-    html.push('<p class="note lobby-sync-status">ルーム ' + escapeHtml(ctx.room.code || roomCode) + ' ／ サーバー: ' + escapeHtml(lastServerPhase || (room.phase || "lobby")) + (lastServerGame ? " (" + escapeHtml(lastServerGame) + ")" : "") + ' ／ 更新: ' + roomUpdatedAt(room.updatedAt) + '</p>');
-    if (lastSyncError) {
-      html.push('<p class="note lobby-sync-error">' + escapeHtml(lastSyncError) + '</p>');
-    }
-    html.push('<button type="button" class="btn btn-secondary btn-block lobby-refresh-btn" data-action="refresh-room">画面を更新</button>');
-    html.push('<button type="button" class="btn btn-secondary btn-block" data-action="hard-reload-room">強制再読み込み</button>');
-    const game = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame") || ctx.room.pendingGame || "werewolf";
-    const rejoinUrl = RoomQr.buildJoinUrl(ctx.room.code || roomCode, { game: game, mode: "room" });
-    html.push('<a href="' + escapeHtml(rejoinUrl) + '" class="btn btn-primary btn-block lobby-rejoin-btn">参加リンクから入り直す</a>');
-    html.push('</section>');
   }
 
   if (isWerewolfLobby) {
@@ -1042,7 +1228,7 @@ function renderLobby(ctx) {
       html.push('人狼を始める（' + ctx.room.players.length + '人）');
       html.push('</button>');
       if (!prefOk) {
-        html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人揃ってから始められます</p>');
+        html.push('<p class="note">' + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers) + '揃ってから始められます</p>');
       } else if (customInvalid) {
         html.push('<p class="note">カスタム構成を直してください</p>');
       }
@@ -1063,7 +1249,26 @@ function renderLobby(ctx) {
       html.push('ワードウルフを始める（' + ctx.room.players.length + '人）');
       html.push('</button>');
       if (!prefOk) {
-        html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人揃ってから始められます</p>');
+        html.push('<p class="note">' + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers) + '揃ってから始められます</p>');
+      }
+      html.push('</section>');
+    }
+  } else if (isDrawingWerewolfLobby) {
+    DrawingWerewolfGame.syncLobbySetupPlayerCount(ctx.room);
+    const prefOk = ctx.room.players.length >= prefMeta.minPlayers && ctx.room.players.length <= prefMeta.maxPlayers;
+
+    html.push('<p class="note lobby-game-label">🎯 <strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
+    html.push(DrawingWerewolfGame.renderLobbySetup(ctx.room, ctx.isHost || ctx.room.mode === "local"));
+
+    if (!ctx.isHost && ctx.room.mode !== "local") {
+      html.push('<p class="note lobby-wait-hint">ゲームが始まると自動で画面が切り替わります</p>');
+    } else if (ctx.isHost || ctx.room.mode === "local") {
+      html.push('<section class="card lobby-start-card">');
+      html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="drawing_werewolf" ' + (!prefOk ? "disabled" : "") + '>');
+      html.push('お絵描き人狼を始める（' + ctx.room.players.length + '人）');
+      html.push('</button>');
+      if (!prefOk) {
+        html.push('<p class="note">' + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers) + '揃ってから始められます</p>');
       }
       html.push('</section>');
     }
@@ -1077,10 +1282,33 @@ function renderLobby(ctx) {
     if (ctx.isHost || ctx.room.mode === "local") {
       html.push('<section class="card lobby-start-card">');
       html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="ito" ' + (!prefOk ? "disabled" : "") + '>');
-      html.push('イトを始める（' + ctx.room.players.length + '人）');
+      html.push('ナンバーリンクを始める（' + ctx.room.players.length + '人）');
       html.push('</button>');
       if (!prefOk) {
-        html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人揃ってから始められます</p>');
+        html.push('<p class="note">' + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers) + '揃ってから始められます</p>');
+      }
+      html.push('</section>');
+    }
+  } else if (isNgwordLobby) {
+    NgWordGame.ensureLobbySetup(ctx.room);
+    const prefOk = ctx.room.players.length >= prefMeta.minPlayers && ctx.room.players.length <= prefMeta.maxPlayers;
+    const themeOk = NgWordGame.canStartWithLobby(ctx.room);
+
+    html.push('<p class="note lobby-game-label">🎯 <strong>' + escapeHtml(prefMeta.name) + '</strong></p>');
+    html.push('<section class="card"><p class="note">各自に言っちゃダメなワードが配られます。自分のは見えず、他の人のNGワードだけ分かります。⚡ 早押しで早い順に点！</p></section>');
+    html.push(NgWordGame.renderLobbySetup(ctx.room, ctx.isHost || ctx.room.mode === "local"));
+
+    if (!ctx.isHost && ctx.room.mode !== "local") {
+      html.push('<p class="note lobby-wait-hint">ゲームが始まると自動で画面が切り替わります</p>');
+    } else if (ctx.isHost || ctx.room.mode === "local") {
+      html.push('<section class="card lobby-start-card">');
+      html.push('<button type="button" class="btn btn-primary lobby-start-btn" data-action="start-game" data-game="ngword" ' + ((!prefOk || !themeOk) ? "disabled" : "") + '>');
+      html.push('NGワードゲームを始める（' + ctx.room.players.length + '人）');
+      html.push('</button>');
+      if (!prefOk) {
+        html.push('<p class="note">' + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers) + '揃ってから始められます</p>');
+      } else if (!themeOk) {
+        html.push('<p class="note">ジャンルを選び直してください</p>');
       }
       html.push('</section>');
     }
@@ -1100,7 +1328,7 @@ function renderLobby(ctx) {
       html.push(prefMeta.name + ' を始める（' + ctx.room.players.length + '人）');
       html.push('</button>');
       if (!prefOk) {
-        html.push('<p class="note">' + prefMeta.minPlayers + '〜' + prefMeta.maxPlayers + '人に人数を合わせてください</p>');
+        html.push('<p class="note">' + formatPlayerRange(prefMeta.minPlayers, prefMeta.maxPlayers) + 'に人数を合わせてください</p>');
       }
       html.push('</section>');
     } else if (ctx.room.mode !== "local") {
@@ -1117,7 +1345,7 @@ function renderLobby(ctx) {
   });
   html.push('</ul></section>');
 
-  if (ctx.isHost && !isWerewolfLobby && !isWordwolfLobby && !isItoLobby) {
+  if (ctx.isHost && !isWerewolfLobby && !isWordwolfLobby && !isItoLobby && !isNgwordLobby) {
     html.push('<section class="card"><h2>ゲームを選ぶ</h2>');
 
     Object.keys(GAME_CATEGORIES).forEach(function (catKey) {
@@ -1131,7 +1359,7 @@ function renderLobby(ctx) {
         if (!getGameModule(meta.id)) return;
         const ok = ctx.room.players.length >= meta.minPlayers && ctx.room.players.length <= meta.maxPlayers;
         html.push('<button type="button" class="btn btn-primary' + (ok ? "" : " btn-unavailable") + '" style="margin-bottom:0.5rem" data-action="start-game" data-game="' + meta.id + '">');
-        html.push(meta.name + '（' + meta.minPlayers + '〜' + meta.maxPlayers + '人）');
+        html.push(meta.name + '（' + formatPlayerRange(meta.minPlayers, meta.maxPlayers) + '）');
         if (!ok) html.push(' — 今は' + ctx.room.players.length + '人');
         html.push('</button>');
       });
@@ -1139,7 +1367,7 @@ function renderLobby(ctx) {
     });
 
     html.push('</section>');
-  } else if (!isWerewolfLobby && !isWordwolfLobby && !isItoLobby) {
+  } else if (!isWerewolfLobby && !isWordwolfLobby && !isItoLobby && !isNgwordLobby) {
     html.push('<section class="card"><p>ホストがゲームを選ぶのを待っています…</p></section>');
   }
 
@@ -1181,6 +1409,233 @@ function getPokerGame(room) {
   return null;
 }
 
+let pokerShowdownQueued = false;
+let pokerStreetAdvanceQueued = false;
+let skullActionQueued = false;
+let blackjackActionQueued = false;
+
+function maybeRunBlackjackDealerLocal(ctx) {
+  if (!ctx.isOnline && room && room.gameState && room.gameState.pendingDealer) {
+    BlackjackGame.dealerPlay(room, null);
+  }
+}
+
+async function saveBlackjackOnlineState() {
+  if (hostSecrets) {
+    BlackjackGame.syncBjSecrets(room, hostSecrets);
+  }
+  const bundle = Secrets.stripFromRoom(room);
+  room = bundle.room;
+  if (hostSecrets) {
+    if (bundle.hostSecrets && bundle.hostSecrets.deck) {
+      hostSecrets.deck = bundle.hostSecrets.deck;
+    }
+    if (bundle.hostSecrets && bundle.hostSecrets.bjStates) {
+      hostSecrets.bjStates = bundle.hostSecrets.bjStates;
+    }
+  }
+  if (playerSecret && bundle.playerSecrets[playerId] && bundle.playerSecrets[playerId].bjState) {
+    playerSecret.bjState = bundle.playerSecrets[playerId].bjState;
+  }
+  await saveAndRender({
+    hostSecrets: hostSecrets || bundle.hostSecrets,
+    playerSecrets: bundle.playerSecrets
+  });
+}
+
+async function saveItoOnlineState() {
+  if (hostSecrets) {
+    ItoGame.syncItoSecrets(room, hostSecrets);
+  }
+  const bundle = Secrets.stripFromRoom(room);
+  room = bundle.room;
+  if (hostSecrets) {
+    if (bundle.hostSecrets && bundle.hostSecrets.hands) {
+      hostSecrets.hands = bundle.hostSecrets.hands;
+    }
+    if (bundle.hostSecrets && bundle.hostSecrets.numbers) {
+      hostSecrets.numbers = bundle.hostSecrets.numbers;
+    }
+  }
+  if (playerSecret && bundle.playerSecrets[playerId]) {
+    if (bundle.playerSecrets[playerId].hand) {
+      playerSecret.hand = bundle.playerSecrets[playerId].hand;
+    }
+    if (bundle.playerSecrets[playerId].number) {
+      playerSecret.number = bundle.playerSecrets[playerId].number;
+    }
+  }
+  await saveAndRender({
+    hostSecrets: hostSecrets || bundle.hostSecrets,
+    playerSecrets: bundle.playerSecrets
+  });
+}
+
+async function completePendingBlackjackActions() {
+  if (!room || room.game !== "blackjack" || !isHost()) return;
+  if (roomActionLock || blackjackActionQueued) return;
+  const gs = room.gameState;
+  if (!gs) return;
+
+  blackjackActionQueued = true;
+  roomActionLock = true;
+  try {
+    let changed = false;
+    BlackjackGame.attachBjSecrets(room, hostSecrets);
+
+    if (gs.pendingDeal) {
+      const result = BlackjackGame.dealRound(room, hostSecrets);
+      if (result.ok) changed = true;
+    }
+
+    if (gs.bjPendingAction) {
+      const result = BlackjackGame.processPendingAction(room, hostSecrets);
+      if (result.ok) changed = true;
+    }
+
+    if (gs.pendingDealer || gs.phase === "bj_dealer_pending") {
+      const result = BlackjackGame.dealerPlay(room, hostSecrets);
+      if (result.ok) changed = true;
+    }
+
+    if (!changed) return;
+    await saveBlackjackOnlineState();
+  } finally {
+    blackjackActionQueued = false;
+    roomActionLock = false;
+  }
+}
+
+async function saveSkullOnlineState() {
+  if (hostSecrets) SkullGame.syncHandsToSecrets(room, hostSecrets);
+  const bundle = Secrets.stripFromRoom(room);
+  room = bundle.room;
+  if (hostSecrets) {
+    if (bundle.hostSecrets && bundle.hostSecrets.hands) {
+      hostSecrets.hands = bundle.hostSecrets.hands;
+    }
+    if (bundle.hostSecrets && bundle.hostSecrets.skullTypes) {
+      hostSecrets.skullTypes = bundle.hostSecrets.skullTypes;
+    }
+  }
+  await saveAndRender({
+    hostSecrets: hostSecrets || bundle.hostSecrets,
+    playerSecrets: bundle.playerSecrets
+  });
+}
+
+async function completePendingSkullActions() {
+  if (!room || room.game !== "skull" || !isHost()) return;
+  if (roomActionLock || skullActionQueued) return;
+  const gs = room.gameState;
+  if (!gs) return;
+
+  skullActionQueued = true;
+  roomActionLock = true;
+  try {
+    let changed = false;
+
+    if (gs.pendingFlip && room.phase === "skull_flip" && hostSecrets && hostSecrets.skullTypes) {
+      const type = hostSecrets.skullTypes[gs.pendingFlip.cardId];
+      if (type) {
+        SkullGame.resolveFlip(room, type, hostSecrets);
+        if (hostSecrets.hands) SkullGame.syncHandsToSecrets(room, hostSecrets);
+        changed = true;
+      }
+    }
+
+    if (gs.pendingPickLoss && room.phase === "skull_pick") {
+      const pick = gs.pendingPickLoss;
+      const loserId = gs.pickLoss && gs.pickLoss.loserId;
+      const result = SkullGame.pickLossCard(room, pick.pickerId, pick.cardId, null, hostSecrets);
+      if (result.ok) {
+        gs.pendingPickLoss = null;
+        if (hostSecrets && hostSecrets.hands) {
+          SkullGame.syncHandsToSecrets(room, hostSecrets);
+        }
+        if (loserId && hostSecrets && hostSecrets.hands && hostSecrets.hands[loserId]) {
+          await Sync.updatePlayerSecret(roomCode, loserId, { hand: hostSecrets.hands[loserId] });
+        }
+        changed = true;
+      }
+    }
+
+    if (!changed) return;
+    await saveSkullOnlineState();
+  } finally {
+    skullActionQueued = false;
+    roomActionLock = false;
+  }
+}
+
+async function completePendingPokerStreetAdvance() {
+  if (!room || room.game !== "texas_holdem" || room.phase !== "poker_street_pending" || !isHost()) return;
+  if (!room.gameState || !room.gameState.pendingStreetAdvance) return;
+  if (roomActionLock || pokerStreetAdvanceQueued || pokerShowdownQueued) return;
+  pokerStreetAdvanceQueued = true;
+  roomActionLock = true;
+  try {
+    const result = TexasHoldemGame.advancePendingStreet(room, hostSecrets);
+    if (!result.ok) return;
+    const bundle = Secrets.stripFromRoom(room);
+    room = bundle.room;
+    if (hostSecrets) {
+      if (bundle.hostSecrets && bundle.hostSecrets.holeCards) {
+        hostSecrets.holeCards = bundle.hostSecrets.holeCards;
+      }
+      if (bundle.hostSecrets && bundle.hostSecrets.deck) {
+        hostSecrets.deck = bundle.hostSecrets.deck;
+      }
+    }
+    await saveAndRender({
+      hostSecrets: hostSecrets || bundle.hostSecrets,
+      playerSecrets: bundle.playerSecrets
+    });
+  } finally {
+    pokerStreetAdvanceQueued = false;
+    roomActionLock = false;
+  }
+}
+
+async function completePendingPokerShowdown() {
+  if (!room || room.game !== "texas_holdem" || room.phase !== "poker_showdown_pending" || !isHost()) return;
+  if (roomActionLock || pokerShowdownQueued) return;
+  pokerShowdownQueued = true;
+  roomActionLock = true;
+  try {
+    PokerUtils.attachHostSecrets(room, hostSecrets);
+    TexasHoldemGame.completeShowdown(room);
+    PokerUtils.syncHostSecretsFromState(room.gameState, hostSecrets);
+    const bundle = Secrets.stripFromRoom(room);
+    room = bundle.room;
+    await saveAndRender({
+      hostSecrets: hostSecrets,
+      playerSecrets: bundle.playerSecrets
+    });
+    showToast("ハンド終了！");
+  } finally {
+    pokerShowdownQueued = false;
+    roomActionLock = false;
+  }
+}
+
+async function savePokerOnlineState() {
+  const bundle = Secrets.stripFromRoom(room);
+  room = bundle.room;
+  if (hostSecrets) {
+    if (bundle.hostSecrets && bundle.hostSecrets.holeCards) {
+      hostSecrets.holeCards = bundle.hostSecrets.holeCards;
+    }
+    if (bundle.hostSecrets && bundle.hostSecrets.deck) {
+      hostSecrets.deck = bundle.hostSecrets.deck;
+    }
+  }
+  await saveAndRender({
+    hostSecrets: hostSecrets || bundle.hostSecrets,
+    playerSecrets: bundle.playerSecrets
+  });
+}
+
 function applyPlayerNamesFromInputs() {
   app.querySelectorAll("[data-player-slot]").forEach(function (input) {
     const idx = parseInt(input.dataset.playerSlot, 10);
@@ -1207,6 +1662,8 @@ async function handleAction(action, data, ctx) {
         const savedLobbyWerewolf = room.lobbyWerewolf ? JSON.parse(JSON.stringify(room.lobbyWerewolf)) : null;
         const savedLobbyIto = room.lobbyIto ? JSON.parse(JSON.stringify(room.lobbyIto)) : null;
         const savedLobbyWordwolf = room.lobbyWordwolf ? JSON.parse(JSON.stringify(room.lobbyWordwolf)) : null;
+        const savedLobbyDrawingWerewolf = room.lobbyDrawingWerewolf ? JSON.parse(JSON.stringify(room.lobbyDrawingWerewolf)) : null;
+        const savedLobbyNgword = room.lobbyNgword ? JSON.parse(JSON.stringify(room.lobbyNgword)) : null;
 
         if (Sync.isOnline()) {
           const fresh = await Sync.load(room.code);
@@ -1215,11 +1672,53 @@ async function handleAction(action, data, ctx) {
             if (savedLobbyWerewolf) room.lobbyWerewolf = savedLobbyWerewolf;
             if (savedLobbyIto) room.lobbyIto = savedLobbyIto;
             if (savedLobbyWordwolf) room.lobbyWordwolf = savedLobbyWordwolf;
+            if (savedLobbyDrawingWerewolf) room.lobbyDrawingWerewolf = savedLobbyDrawingWerewolf;
+            if (savedLobbyNgword) room.lobbyNgword = savedLobbyNgword;
           }
         }
 
         if (room.players.length < startMeta.minPlayers || room.players.length > startMeta.maxPlayers) {
-          showToast(startMeta.name + " は " + startMeta.minPlayers + "〜" + startMeta.maxPlayers + "人です（現在 " + room.players.length + "人）");
+          showToast(startMeta.name + " は " + formatPlayerRange(startMeta.minPlayers, startMeta.maxPlayers) + "です（現在 " + room.players.length + "人）");
+          return;
+        }
+
+        if (data.game === "ngword" && !NgWordGame.canStartWithLobby(room)) {
+          showToast("ジャンルを選び直してください");
+          return;
+        }
+
+        if (data.game === "daifugo" && room.mode !== "room") {
+          showToast("大富豪は各自のスマホモードのみ対応です");
+          return;
+        }
+
+        if (data.game === "texas_holdem" && room.mode !== "room") {
+          showToast("テキサスホールデムは各自のスマホモードのみ対応です");
+          return;
+        }
+
+        if (data.game === "ninetyNine" && room.mode !== "room") {
+          showToast("99は各自のスマホモードのみ対応です");
+          return;
+        }
+
+        if (data.game === "skull" && room.mode !== "room") {
+          showToast("爆弾は各自のスマホモードのみ対応です");
+          return;
+        }
+
+        if (data.game === "blackjack" && room.mode !== "room") {
+          showToast("ブラックジャックは各自のスマホモードのみ対応です");
+          return;
+        }
+
+        if (data.game === "ito" && room.mode !== "room") {
+          showToast("ナンバーリンクは各自のスマホモードのみ対応です");
+          return;
+        }
+
+        if (data.game === "shogi" && room.mode !== "room") {
+          showToast("将棋は各自のスマホモードのみ対応です");
           return;
         }
 
@@ -1227,6 +1726,10 @@ async function handleAction(action, data, ctx) {
 
         if (data.game === "ito") {
           ItoGame.ensureLobbySetup(room);
+        }
+
+        if (data.game === "ngword") {
+          NgWordGame.ensureLobbySetup(room);
         }
 
         room = game.init(room);
@@ -1255,6 +1758,12 @@ async function handleAction(action, data, ctx) {
         }
         if (room.game === "sevens") {
           SevensGame.clearSelected();
+        }
+        if (room.game === "ninetyNine") {
+          NinetyNineGame.clearSelected();
+        }
+        if (room.game === "skull") {
+          SkullGame.clearSelected();
         }
         if (room.game === "five_draw") {
           FiveDrawGame.clearSelected();
@@ -1359,11 +1868,14 @@ async function handleAction(action, data, ctx) {
       await saveAndRender();
       break;
 
-    case "ito-next-reveal":
-      if (!ItoGame.canManage(ctx)) return;
+    case "ito-next-reveal": {
+      const gsReveal = room.gameState;
+      const currentReveal = gsReveal ? room.players[gsReveal.revealIndex] : null;
+      if (!ItoGame.canRevealAdvance(ctx, currentReveal ? currentReveal.id : null)) return;
       room = ItoGame.advanceReveal(room);
       await saveAndRender();
       break;
+    }
 
     case "ito-reveal-number": {
       const zone = document.getElementById("itoRevealFlipZone");
@@ -1400,7 +1912,11 @@ async function handleAction(action, data, ctx) {
     case "ito-peek-player": {
       const peekEl = document.getElementById("peekArea");
       if (!peekEl) break;
-      const hand = room.gameState.hands[data.player] || [];
+      if (ctx.isOnline && room.mode === "room" && !ctx.isHost && data.player !== ctx.me.id) {
+        showToast("自分の数字のみ確認できます");
+        return;
+      }
+      const hand = ItoGame.getHand(ctx, data.player);
       const pname = ItoGame.playerName(room, data.player);
       peekEl.innerHTML = '<p class="ito-secret-label">' + escapeHtml(pname) + ' の数字</p><div class="ito-hand-preview">' +
         ItoGame.renderHandCards(hand) + '</div><button type="button" class="btn btn-primary" data-action="ito-hide-peek">隠す</button>';
@@ -1419,14 +1935,19 @@ async function handleAction(action, data, ctx) {
     }
 
     case "ito-play-card": {
-      if (!ItoGame.canManage(ctx)) return;
+      if (!ItoGame.canManage(ctx)) {
+        showToast("ホストがカードを選びます");
+        return;
+      }
+      if (ctx.isOnline && isHost()) ItoGame.attachItoSecrets(room, hostSecrets);
       const playResult = ItoGame.playCard(room, data.player);
       if (!playResult.ok) {
         showToast(playResult.error || "出せません");
         return;
       }
       room = playResult.room;
-      await saveAndRender();
+      if (ctx.isOnline) await saveItoOnlineState();
+      else await saveAndRender();
       if (room.gameState.lastPlayResult) {
         const r = room.gameState.lastPlayResult;
         if (r.success) showToast(r.name + " が " + r.number + " を出した — 成功！");
@@ -1441,17 +1962,22 @@ async function handleAction(action, data, ctx) {
       await saveAndRender();
       break;
 
-    case "ito-next-stage":
+    case "ito-next-stage": {
       if (!ItoGame.canManage(ctx)) return;
+      if (ctx.isOnline && isHost()) ItoGame.attachItoSecrets(room, hostSecrets);
       room = ItoGame.startNextStage(room);
-      await saveAndRender();
+      if (ctx.isOnline) await saveItoOnlineState();
+      else await saveAndRender();
       break;
+    }
 
-    case "ito-restart":
+    case "ito-restart": {
       if (!ItoGame.canManage(ctx)) return;
       room = ItoGame.restart(room);
-      await saveAndRender();
+      if (ctx.isOnline) await saveItoOnlineState();
+      else await saveAndRender();
       break;
+    }
 
     /* --- Werewolf --- */
     case "wolf-show-role":
@@ -1725,7 +2251,341 @@ async function handleAction(action, data, ctx) {
       DaifugoGame.clearSelected();
       break;
 
+    case "daifugo-rules-toggle":
+      TrumpUi.togglePanel("daifugoRulesPanel");
+      break;
+
+    case "daifugo-local-rules-toggle":
+      TrumpUi.togglePanel("daifugoLocalRulesPanel");
+      break;
+
+    case "sv-rules-toggle":
+      TrumpUi.togglePanel("svRulesPanel");
+      break;
+
+    case "nn-rules-toggle":
+      TrumpUi.togglePanel("nnRulesPanel");
+      break;
+
+    case "nn-toggle":
+      if (!NinetyNineGame.isMyTurn(ctx)) return;
+      NinetyNineGame.toggleCard(data.card);
+      break;
+
+    case "nn-play": {
+      const actingId = NinetyNineGame._actingPlayer(ctx);
+      if (!NinetyNineGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      const cardId = NinetyNineGame._selected;
+      if (!cardId) { showToast("カードを選んでください"); return; }
+
+      const gs = room.gameState;
+      if (!gs.hands) gs.hands = {};
+
+      if (!ctx.isOnline) {
+        const result = NinetyNineGame.playCard(room, actingId, cardId, gs.hands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
+        NinetyNineGame.clearSelected();
+        if (result.bust) showToast("99を超えて脱落！");
+        if (room.phase === "ninety_nine_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+        break;
+      }
+
+      await withOnlineMutation(async function () {
+        const hand = NinetyNineGame.getHand(ctx, ctx.me.id);
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        const result = NinetyNineGame.playCard(room, ctx.me.id, cardId, tempHands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
+
+        await persistPlayerHand(ctx, result.hand || []);
+        NinetyNineGame.clearSelected();
+        if (result.bust) showToast("99を超えて脱落！");
+        if (room.phase === "ninety_nine_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+      });
+      break;
+    }
+
+    case "nn-effect": {
+      const gs = room.gameState;
+      if (!gs.pendingChoice || gs.pendingChoice.playerId !== ctx.me.id) {
+        showToast("選べる効果がありません");
+        return;
+      }
+      const result = NinetyNineGame.applyChoice(room, ctx.me.id, data.choice, data.value);
+      if (!result.ok) { showToast(result.error || "選べません"); return; }
+      if (result.bust) showToast("99を超えて脱落！");
+      if (room.phase === "ninety_nine_result") showToast("勝者が決まりました！");
+      await saveAndRender();
+      break;
+    }
+
+    /* --- 爆弾 --- */
+    case "sk-rules-toggle":
+      TrumpUi.togglePanel("skRulesPanel");
+      break;
+
+    case "sk-toggle":
+      if (!SkullGame.isMyTurn(ctx)) return;
+      SkullGame.toggleCard(data.card);
+      break;
+
+    case "sk-play": {
+      const actingId = SkullGame._actingPlayer(ctx);
+      if (!SkullGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      const cardId = SkullGame._selected;
+      if (!cardId) { showToast("カードを選んでください"); return; }
+
+      const gs = room.gameState;
+      if (!gs.hands) gs.hands = {};
+
+      if (!ctx.isOnline) {
+        const result = SkullGame.playCard(room, actingId, cardId, gs.hands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
+        SkullGame.clearSelected();
+        if (result.beginFlip) showToast("裏返しフェーズ！");
+        if (room.phase === "skull_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+        break;
+      }
+
+      const hand = SkullGame.getHand(ctx, ctx.me.id);
+      const tempHands = {};
+      tempHands[ctx.me.id] = hand;
+      const result = SkullGame.playCard(room, ctx.me.id, cardId, tempHands);
+      if (!result.ok) { showToast(result.error || "出せません"); return; }
+
+      const newHand = result.hand || [];
+      playerSecret = playerSecret || {};
+      playerSecret.hand = newHand;
+      await Sync.updatePlayerSecret(roomCode, ctx.me.id, { hand: newHand });
+      if (hostSecrets && hostSecrets.hands) {
+        hostSecrets.hands[ctx.me.id] = newHand;
+        await Sync.updateHostSecrets(roomCode, { hands: hostSecrets.hands });
+      }
+
+      SkullGame.clearSelected();
+      if (result.beginFlip) showToast("裏返しフェーズ！");
+      if (room.phase === "skull_result") showToast("勝者が決まりました！");
+      await saveSkullOnlineState();
+      break;
+    }
+
+    case "sk-bid": {
+      const actingId = SkullGame._actingPlayer(ctx);
+      if (!SkullGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      const amount = data.amount ? parseInt(data.amount, 10) : 1;
+      const result = SkullGame.startBid(room, actingId, amount);
+      if (!result.ok) { showToast(result.error || "ビッドできません"); return; }
+      if (result.beginFlip) showToast("裏返しフェーズ！");
+      if (ctx.isOnline) await saveSkullOnlineState();
+      else await saveAndRender();
+      break;
+    }
+
+    case "sk-pass": {
+      const actingId = SkullGame._actingPlayer(ctx);
+      if (!SkullGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      const result = SkullGame.passBid(room, actingId);
+      if (!result.ok) { showToast(result.error || "パスできません"); return; }
+      if (result.beginFlip) showToast("裏返しフェーズ！");
+      if (ctx.isOnline) await saveSkullOnlineState();
+      else await saveAndRender();
+      break;
+    }
+
+    case "sk-flip": {
+      if (!SkullGame.isFlipper(ctx)) { showToast("あなたの番ではありません"); return; }
+      const result = SkullGame.requestFlip(room, ctx.me.id, data.owner, data.card);
+      if (!result.ok) { showToast(result.error || "裏返せません"); return; }
+
+      if (!ctx.isOnline) {
+        const type = SkullGame.getCardType(ctx, data.card);
+        SkullGame.resolveFlip(room, type, null);
+        if (room.phase === "skull_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+        break;
+      }
+
+      if (isHost() && hostSecrets && hostSecrets.skullTypes) {
+        const type = hostSecrets.skullTypes[data.card];
+        SkullGame.resolveFlip(room, type, hostSecrets);
+        if (hostSecrets.hands) SkullGame.syncHandsToSecrets(room, hostSecrets);
+        if (room.phase === "skull_result") showToast("勝者が決まりました！");
+        await saveSkullOnlineState();
+      } else {
+        await saveSkullOnlineState();
+      }
+      break;
+    }
+
+    case "sk-pick-loss": {
+      const gs = room.gameState;
+      if (!gs.pickLoss || gs.pickLoss.pickerId !== ctx.me.id) {
+        showToast("選べる状態ではありません");
+        return;
+      }
+
+      if (!ctx.isOnline) {
+        const result = SkullGame.pickLossCard(room, ctx.me.id, data.card, gs.hands, null);
+        if (!result.ok) { showToast(result.error || "選べません"); return; }
+        if (room.phase === "skull_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+        break;
+      }
+
+      if (isHost()) {
+        const loserId = gs.pickLoss.loserId;
+        const result = SkullGame.pickLossCard(room, ctx.me.id, data.card, null, hostSecrets);
+        if (!result.ok) { showToast(result.error || "選べません"); return; }
+        if (hostSecrets) SkullGame.syncHandsToSecrets(room, hostSecrets);
+        if (hostSecrets && hostSecrets.hands && hostSecrets.hands[loserId]) {
+          await Sync.updatePlayerSecret(roomCode, loserId, { hand: hostSecrets.hands[loserId] });
+        }
+        if (room.phase === "skull_result") showToast("勝者が決まりました！");
+        await saveSkullOnlineState();
+      } else {
+        const result = SkullGame.requestPickLoss(room, ctx.me.id, data.card);
+        if (!result.ok) { showToast(result.error || "選べません"); return; }
+        await saveSkullOnlineState();
+      }
+      break;
+    }
+
+    case "sk-continue": {
+      const result = SkullGame.dismissResult(room);
+      if (!result.ok) return;
+      if (ctx.isOnline) await saveSkullOnlineState();
+      else await saveAndRender();
+      break;
+    }
+
+    /* --- ブラックジャック --- */
+    case "bj-bet": {
+      if (ctx.isOnline && isHost()) BlackjackGame.attachBjSecrets(room, hostSecrets);
+      const result = BlackjackGame.placeBet(room, ctx.me.id, data.amount);
+      if (!result.ok) { showToast(result.error || "ベットできません"); return; }
+      if (!ctx.isOnline && room.gameState.pendingDeal) {
+        BlackjackGame.dealRound(room, null);
+      }
+      if (ctx.isOnline) await saveBlackjackOnlineState();
+      else await saveAndRender();
+      break;
+    }
+
+    case "bj-insurance": {
+      if (ctx.isOnline && isHost()) BlackjackGame.attachBjSecrets(room, hostSecrets);
+      const take = data.take === "1";
+      const result = BlackjackGame.setInsurance(room, ctx.me.id, take);
+      if (!result.ok) { showToast(result.error || "選択できません"); return; }
+      if (ctx.isOnline) await saveBlackjackOnlineState();
+      else await saveAndRender();
+      break;
+    }
+
+    case "bj-hit": {
+      if (!BlackjackGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      if (ctx.isOnline) {
+        const result = BlackjackGame.queuePlayerAction(room, ctx.me.id, "hit");
+        if (!result.ok) { showToast(result.error || "ヒットできません"); return; }
+        await saveBlackjackOnlineState();
+      } else {
+        const result = BlackjackGame.hit(room, ctx.me.id, hostSecrets);
+        if (!result.ok) { showToast(result.error || "ヒットできません"); return; }
+        maybeRunBlackjackDealerLocal(ctx);
+        await saveAndRender();
+      }
+      break;
+    }
+
+    case "bj-stand": {
+      if (!BlackjackGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      if (ctx.isOnline) {
+        const result = BlackjackGame.queuePlayerAction(room, ctx.me.id, "stand");
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        await saveBlackjackOnlineState();
+      } else {
+        const result = BlackjackGame.stand(room, ctx.me.id);
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        maybeRunBlackjackDealerLocal(ctx);
+        await saveAndRender();
+      }
+      break;
+    }
+
+    case "bj-surrender": {
+      if (!BlackjackGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      if (ctx.isOnline) {
+        const result = BlackjackGame.queuePlayerAction(room, ctx.me.id, "surrender");
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        await saveBlackjackOnlineState();
+      } else {
+        const result = BlackjackGame.surrender(room, ctx.me.id);
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        maybeRunBlackjackDealerLocal(ctx);
+        await saveAndRender();
+      }
+      break;
+    }
+
+    case "bj-double": {
+      if (!BlackjackGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      if (ctx.isOnline) {
+        const result = BlackjackGame.queuePlayerAction(room, ctx.me.id, "double");
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        await saveBlackjackOnlineState();
+      } else {
+        const result = BlackjackGame.doubleDown(room, ctx.me.id, hostSecrets);
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        maybeRunBlackjackDealerLocal(ctx);
+        await saveAndRender();
+      }
+      break;
+    }
+
+    case "bj-split": {
+      if (!BlackjackGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      if (ctx.isOnline) {
+        const result = BlackjackGame.queuePlayerAction(room, ctx.me.id, "split");
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        await saveBlackjackOnlineState();
+      } else {
+        const result = BlackjackGame.split(room, ctx.me.id, hostSecrets);
+        if (!result.ok) { showToast(result.error || "できません"); return; }
+        maybeRunBlackjackDealerLocal(ctx);
+        await saveAndRender();
+      }
+      break;
+    }
+
+    case "bj-next-round": {
+      if (!ctx.isHost) return;
+      if (ctx.isOnline && isHost()) BlackjackGame.attachBjSecrets(room, hostSecrets);
+      const result = BlackjackGame.nextRound(room);
+      if (!result.ok) { showToast(result.error || "次のラウンドに進めません"); return; }
+      if (result.gameOver) showToast("全員チップ切れで終了");
+      if (ctx.isOnline) await saveBlackjackOnlineState();
+      else await saveAndRender();
+      break;
+    }
+
+    case "doubt-rules-toggle":
+      TrumpUi.togglePanel("doubtRulesPanel");
+      break;
+
+    case "om-rules-toggle":
+      TrumpUi.togglePanel("omRulesPanel");
+      break;
+
     case "daifugo-play": {
+      const tableEl = app.querySelector(".table-area");
+      if (tableEl) {
+        tableEl.classList.add("is-play-flash");
+        setTimeout(function () {
+          tableEl.classList.remove("is-play-flash");
+        }, 380);
+      }
       const actingId = DaifugoGame._actingPlayer(ctx);
       if (!DaifugoGame.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
       const cardIds = DaifugoGame.getSelected();
@@ -1738,49 +2598,280 @@ async function handleAction(action, data, ctx) {
         const result = DaifugoGame.playCards(room, actingId, cardIds, gs.hands);
         if (!result.ok) { showToast(result.error || "出せません"); return; }
         DaifugoGame.clearSelected();
-        if (gs.table && gs.table.type === "four") showToast("革命！");
+        if (result.roundEnd) showToast("ラウンド終了");
         await saveAndRender();
         break;
       }
 
-      const hand = DaifugoGame.getHand(ctx, ctx.me.id);
-      const selected = hand.filter(function (c) { return cardIds.includes(c.id); });
-      const play = DaifugoGame.analyzePlay(selected);
-      if (!play) { showToast("出せる組み合わせではありません"); return; }
-      if (gs.table && !DaifugoGame.canBeat(gs.table, play, gs.revolution)) {
-        showToast("場のカードより強くありません"); return;
-      }
+      await withOnlineMutation(async function () {
+        const hand = DaifugoGame.getHand(ctx, ctx.me.id);
+        const selected = hand.filter(function (c) { return cardIds.indexOf(c.id) >= 0; });
+        const play = DaifugoGame.analyzePlay(selected);
+        if (!play) { showToast("出せる組み合わせではありません"); return; }
+        if (gs.table && !DaifugoGame.canBeat(gs.table, play, DaifugoGame._isRevolutionActive(gs))) {
+          showToast("場のカードより強くありません"); return;
+        }
 
-      const tempHands = {};
-      tempHands[ctx.me.id] = hand;
-      const result = DaifugoGame.playCards(room, ctx.me.id, cardIds, tempHands);
-      if (!result.ok) { showToast(result.error || "出せません"); return; }
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        const result = DaifugoGame.playCards(room, ctx.me.id, cardIds, tempHands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
 
-      const newHand = result.hand || [];
-      playerSecret = playerSecret || {};
-      playerSecret.hand = newHand;
-      await Sync.updatePlayerSecret(roomCode, ctx.me.id, { hand: newHand });
-
-      if (hostSecrets && hostSecrets.hands) {
-        hostSecrets.hands[ctx.me.id] = newHand;
-        await Sync.updateHostSecrets(roomCode, { hands: hostSecrets.hands });
-      }
-
-      DaifugoGame.clearSelected();
-      if (room.gameState.table && room.gameState.table.type === "four") showToast("革命！");
-      await saveAndRender();
+        await persistPlayerHand(ctx, result.hand || []);
+        DaifugoGame.clearSelected();
+        if (result.tochi) showToast("都落ち！");
+        if (result.roundEnd) showToast("ラウンド終了");
+        await saveAndRender();
+      });
       break;
     }
 
     case "daifugo-pass": {
       const actingId = DaifugoGame._actingPlayer(ctx);
       if (!DaifugoGame.isMyTurn(ctx)) return;
-      const result = DaifugoGame.pass(room, actingId);
-      if (!result.ok) { showToast(result.error || "パスできません"); return; }
-      DaifugoGame.clearSelected();
-      await saveAndRender();
+      if (!ctx.isOnline) {
+        const result = DaifugoGame.pass(room, actingId);
+        if (!result.ok) { showToast(result.error || "パスできません"); return; }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+        break;
+      }
+      await withOnlineMutation(async function () {
+        const result = DaifugoGame.pass(room, actingId);
+        if (!result.ok) { showToast(result.error || "パスできません"); return; }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+      });
       break;
     }
+
+    case "daifugo-seven-target": {
+      const actingId = DaifugoGame._actingPlayer(ctx);
+      if (!DaifugoGame.isMyTurn(ctx) || !data.player) return;
+      if (!ctx.isOnline) {
+        const result = DaifugoGame.chooseSevenTarget(room, actingId, data.player);
+        if (!result.ok) { showToast(result.error || "選べません"); return; }
+        await saveAndRender();
+        break;
+      }
+      await withOnlineMutation(async function () {
+        const result = DaifugoGame.chooseSevenTarget(room, actingId, data.player);
+        if (!result.ok) { showToast(result.error || "選べません"); return; }
+        await saveAndRender();
+      });
+      break;
+    }
+
+    case "daifugo-seven-give": {
+      const actingId = DaifugoGame._actingPlayer(ctx);
+      if (!DaifugoGame.isMyTurn(ctx)) return;
+      const cardIds = DaifugoGame.getSelected();
+      const pending = room.gameState.pending;
+      if (!pending || cardIds.length !== pending.count) {
+        showToast(pending ? pending.count + "枚選んでください" : "7渡し中ではありません");
+        return;
+      }
+
+      if (!ctx.isOnline) {
+        if (!room.gameState.hands) room.gameState.hands = {};
+        const gsHands = room.gameState.hands;
+        if (!gsHands[pending.targetId]) gsHands[pending.targetId] = [];
+        const result = DaifugoGame.submitSevenGive(room, actingId, cardIds, gsHands);
+        if (!result.ok) { showToast(result.error || "渡せません"); return; }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+        break;
+      }
+
+      await withOnlineMutation(async function () {
+        const hand = DaifugoGame.getHand(ctx, ctx.me.id);
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        tempHands[pending.targetId] = await getRemoteTrumpHand(pending.targetId);
+        const result = DaifugoGame.submitSevenGive(room, ctx.me.id, cardIds, tempHands);
+        if (!result.ok) { showToast(result.error || "渡せません"); return; }
+        await persistPlayerHand(ctx, result.hand);
+        await Sync.patchHostHand(roomCode, pending.targetId, result.toHand);
+        if (hostSecrets && hostSecrets.hands) {
+          hostSecrets.hands[pending.targetId] = result.toHand;
+        }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+      });
+      break;
+    }
+
+    case "daifugo-seven-return": {
+      const actingId = DaifugoGame._actingPlayer(ctx);
+      if (!DaifugoGame.isMyTurn(ctx)) return;
+      const cardIds = DaifugoGame.getSelected();
+      const pending = room.gameState.pending;
+      if (!pending || cardIds.length !== pending.count) {
+        showToast(pending ? pending.count + "枚選んでください" : "7渡し中ではありません");
+        return;
+      }
+
+      if (!ctx.isOnline) {
+        if (!room.gameState.hands) room.gameState.hands = {};
+        const gsHands = room.gameState.hands;
+        if (!gsHands[pending.toId]) gsHands[pending.toId] = [];
+        const result = DaifugoGame.submitSevenReturn(room, actingId, cardIds, gsHands);
+        if (!result.ok) { showToast(result.error || "返せません"); return; }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+        break;
+      }
+
+      await withOnlineMutation(async function () {
+        const hand = DaifugoGame.getHand(ctx, ctx.me.id);
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        tempHands[pending.toId] = await getRemoteTrumpHand(pending.toId);
+        const result = DaifugoGame.submitSevenReturn(room, ctx.me.id, cardIds, tempHands);
+        if (!result.ok) { showToast(result.error || "返せません"); return; }
+        await persistPlayerHand(ctx, result.fromHand);
+        await Sync.patchHostHand(roomCode, pending.toId, result.toHand);
+        if (hostSecrets && hostSecrets.hands) {
+          hostSecrets.hands[pending.toId] = result.toHand;
+        }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+      });
+      break;
+    }
+
+    case "daifugo-ten-discard": {
+      const actingId = DaifugoGame._actingPlayer(ctx);
+      if (!DaifugoGame.isMyTurn(ctx)) return;
+      const cardIds = DaifugoGame.getSelected();
+      const pending = room.gameState.pending;
+      if (!pending) return;
+      if (cardIds.length > pending.count) { showToast("捨てすぎです"); return; }
+
+      if (!ctx.isOnline) {
+        const gs = room.gameState;
+        const result = DaifugoGame.discardTenExtra(room, actingId, cardIds);
+        if (!result.ok) { showToast(result.error || "捨てられません"); return; }
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+        break;
+      }
+
+      await withOnlineMutation(async function () {
+        const hand = DaifugoGame.getHand(ctx, ctx.me.id);
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        const result = DaifugoGame.discardTenExtra(room, ctx.me.id, cardIds, tempHands);
+        if (!result.ok) { showToast(result.error || "捨てられません"); return; }
+        await persistPlayerHand(ctx, result.hand);
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+      });
+      break;
+    }
+
+    case "daifugo-ten-skip": {
+      const actingId = DaifugoGame._actingPlayer(ctx);
+      if (!DaifugoGame.isMyTurn(ctx)) return;
+      if (!ctx.isOnline) {
+        const result = DaifugoGame.skipTenDiscard(room, actingId);
+        if (!result.ok) return;
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+        break;
+      }
+      await withOnlineMutation(async function () {
+        const result = DaifugoGame.skipTenDiscard(room, actingId);
+        if (!result.ok) return;
+        DaifugoGame.clearSelected();
+        await saveAndRender();
+      });
+      break;
+    }
+
+    case "daifugo-exchange": {
+      const step = DaifugoGame.getCurrentExchangeStep(room);
+      if (!step) return;
+      const actingId = ctx.isOnline ? ctx.me.id : step.fromId;
+      if (actingId !== step.fromId) return;
+      const cardIds = DaifugoGame.getSelected();
+      if (!cardIds.length) { showToast(step.count + "枚選んでください"); return; }
+
+      if (!ctx.isOnline) {
+        const gs = room.gameState;
+        const result = DaifugoGame.submitExchangeCards(room, actingId, cardIds, gs.hands);
+        if (!result.ok) { showToast(result.error || "交換できません"); return; }
+        DaifugoGame.clearSelected();
+        if (result.exchangeDone) {
+          room = DaifugoGame.startNextRound(room);
+        }
+        await saveAndRender();
+        break;
+      }
+
+      await withOnlineMutation(async function () {
+        const hand = DaifugoGame.getHand(ctx, ctx.me.id);
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        tempHands[step.toId] = await getRemoteTrumpHand(step.toId);
+        const result = DaifugoGame.submitExchangeCards(room, ctx.me.id, cardIds, tempHands);
+        if (!result.ok) { showToast(result.error || "交換できません"); return; }
+
+        await persistPlayerHand(ctx, result.hand);
+        await Sync.patchHostHand(roomCode, step.toId, tempHands[step.toId]);
+
+        DaifugoGame.clearSelected();
+        if (result.exchangeDone && ctx.isHost) {
+          room = DaifugoGame.startNextRound(room);
+          const bundle = Secrets.stripFromRoom(room);
+          room = bundle.room;
+          hostSecrets = bundle.hostSecrets;
+          playerSecret = bundle.playerSecrets[ctx.me.id] || playerSecret;
+        }
+        await saveAndRender({
+          hostSecrets: hostSecrets,
+          playerSecrets: playerSecret ? { [ctx.me.id]: playerSecret } : {}
+        });
+      });
+      break;
+    }
+
+    case "daifugo-exchange-auto":
+      if (!ctx.isHost) return;
+      {
+        const gs = room.gameState;
+        const hands = ctx.isOnline && hostSecrets && hostSecrets.hands
+          ? hostSecrets.hands
+          : gs.hands;
+        DaifugoGame._applyExchangeAuto(room, hands);
+        if (ctx.isOnline && hostSecrets) {
+          hostSecrets.hands = hands;
+          await Sync.updateHostSecrets(roomCode, { hands: hands });
+        } else {
+          gs.hands = hands;
+        }
+        room = DaifugoGame.startNextRound(room);
+        if (ctx.isOnline) {
+          const bundle = Secrets.stripFromRoom(room);
+          room = bundle.room;
+          await saveAndRender({ hostSecrets: bundle.hostSecrets });
+        } else {
+          await saveAndRender();
+        }
+      }
+      break;
+
+    case "daifugo-next-round":
+      if (!ctx.isHost) return;
+      room = DaifugoGame.startNextRound(room);
+      if (ctx.isOnline) {
+        const bundle = Secrets.stripFromRoom(room);
+        room = bundle.room;
+        await saveAndRender({ hostSecrets: bundle.hostSecrets });
+      } else {
+        await saveAndRender();
+      }
+      break;
 
     /* --- ダウト --- */
     case "doubt-toggle":
@@ -1810,22 +2901,17 @@ async function handleAction(action, data, ctx) {
         break;
       }
 
-      const hand = DoubtGame.getHand(ctx, ctx.me.id);
-      const tempHands = {};
-      tempHands[ctx.me.id] = hand;
-      const result = DoubtGame.playCards(room, ctx.me.id, cardIds, tempHands);
-      if (!result.ok) { showToast(result.error || "出せません"); return; }
+      await withOnlineMutation(async function () {
+        const hand = DoubtGame.getHand(ctx, ctx.me.id);
+        const tempHands = {};
+        tempHands[ctx.me.id] = hand;
+        const result = DoubtGame.playCards(room, ctx.me.id, cardIds, tempHands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
 
-      const newHand = result.hand || [];
-      playerSecret = playerSecret || {};
-      playerSecret.hand = newHand;
-      await Sync.updatePlayerSecret(roomCode, ctx.me.id, { hand: newHand });
-      if (hostSecrets && hostSecrets.hands) {
-        hostSecrets.hands[ctx.me.id] = newHand;
-        await Sync.updateHostSecrets(roomCode, { hands: hostSecrets.hands });
-      }
-      DoubtGame.clearSelected();
-      await saveAndRender();
+        await persistPlayerHand(ctx, result.hand || []);
+        DoubtGame.clearSelected();
+        await saveAndRender();
+      });
       break;
     }
 
@@ -2025,27 +3111,240 @@ async function handleAction(action, data, ctx) {
       break;
     }
 
-    /* --- NGワードゲーム --- */
-    case "ng-reveal":
-      room = NgWordGame.revealCard(room);
+    /* --- お絵描き人狼 --- */
+    case "dw-show-word": {
+      const el = document.getElementById("dwWordReveal");
+      if (el) el.classList.remove("hidden");
+      break;
+    }
+
+    case "dw-confirm-word":
+      room = DrawingWerewolfGame.confirmWord(room, ctx.me.id);
       await saveAndRender();
       break;
 
-    case "ng-correct":
-      room = NgWordGame.markCorrect(room);
-      await saveNgRound(ctx);
-      showToast("正解！次の説明者へ");
+    case "dw-start-draw":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      room = DrawingWerewolfGame.startDraw(room);
+      await saveAndRender();
       break;
 
-    case "ng-violation":
-      room = NgWordGame.markNgViolation(room);
-      await saveNgRound(ctx);
-      showToast("NGワード！次の説明者へ");
+    case "dw-next-reveal":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      room = DrawingWerewolfGame.nextReveal(room);
+      await saveAndRender();
       break;
 
-    case "ng-skip":
-      room = NgWordGame.skipCard(room);
-      await saveNgRound(ctx);
+    case "dw-submit-draw": {
+      const drawer = DrawingWerewolfGame.getCurrentDrawer(room);
+      if (!drawer) {
+        showToast("全員の加筆が終わっています");
+        return;
+      }
+      if (room.mode !== "local" && drawer.id !== ctx.me.id) {
+        showToast("あなたの番ではありません");
+        return;
+      }
+      const dataUrl = DrawingWerewolfGame.captureCanvas();
+      const prevKey = DrawingWerewolfGame.draftKey(room, drawer.id);
+      const result = DrawingWerewolfGame.submitDrawing(room, drawer.id, dataUrl);
+      if (!result.ok) {
+        showToast(result.error || "提出できませんでした");
+        return;
+      }
+      room = result.room;
+      if (DrawingWerewolfGame._drafts) delete DrawingWerewolfGame._drafts[prevKey];
+      await saveAndRender();
+      break;
+    }
+
+    case "dw-start-discuss":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      room = DrawingWerewolfGame.startDiscussion(room);
+      await saveAndRender();
+      break;
+
+    case "dw-start-vote":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      room = DrawingWerewolfGame.startVote(room);
+      await saveAndRender();
+      break;
+
+    case "dw-proceed-ready":
+      if (!ctx.me || !ctx.me.id) return;
+      if (room.phase !== "draw_werewolf_discuss") return;
+      if (room.gameState.proceedReady && room.gameState.proceedReady[ctx.me.id]) return;
+      room = DrawingWerewolfGame.markProceedReady(room, ctx.me.id);
+      if (DrawingWerewolfGame.hasProceedMajority(room)) {
+        room = DrawingWerewolfGame.startVote(room);
+      }
+      await saveAndRender();
+      break;
+
+    case "dw-vote": {
+      let voterId = ctx.me.id;
+      if (room.mode === "local") {
+        const voter = DrawingWerewolfGame.getCurrentVoter(room);
+        if (!voter) {
+          showToast("全員の投票が終わっています");
+          return;
+        }
+        voterId = voter.id;
+      }
+      room = DrawingWerewolfGame.castVote(room, voterId, data.player);
+      await saveAndRender();
+      break;
+    }
+
+    case "dw-resolve-vote":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      if (!DrawingWerewolfGame.canResolveVote(room)) {
+        showToast("過半数の投票が揃うまで待ってください");
+        return;
+      }
+      room = DrawingWerewolfGame.resolveVote(room, DrawingWerewolfGame.getRolesMap(ctx));
+      await saveAndRender();
+      break;
+
+    case "dw-submit-guess": {
+      if (room.phase !== "draw_werewolf_wolf_guess") return;
+      if (room.mode !== "local") {
+        if (!room.gameState.executed || room.gameState.executed !== ctx.me.id) {
+          showToast("人狼本人だけが回答できます");
+          return;
+        }
+      }
+      const guessInput = document.getElementById("dwGuessInput");
+      const rawGuess = guessInput ? guessInput.value : "";
+      const cleanedGuess = DrawingWerewolfGame.sanitizeHiraganaInput(rawGuess);
+      if (guessInput) guessInput.value = cleanedGuess;
+      if (!cleanedGuess) {
+        showToast("ひらがなでお題を入力してください");
+        return;
+      }
+      if (!DrawingWerewolfGame.isHiraganaAnswer(cleanedGuess)) {
+        showToast("ひらがなのみで答えてください");
+        return;
+      }
+      room = DrawingWerewolfGame.submitWolfGuess(room, cleanedGuess);
+      if (room.gameState.wolfGuessCorrect) {
+        showToast("正解！人狼の逆転勝利！");
+      } else {
+        showToast("不正解…市民の勝利");
+      }
+      await saveAndRender();
+      break;
+    }
+
+    case "dw-restart":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      room = DrawingWerewolfGame.init(room);
+      if (Sync.isOnline()) {
+        const bundle = Secrets.stripFromRoom(room);
+        room = bundle.room;
+        await saveAndRender({
+          hostSecrets: bundle.hostSecrets,
+          playerSecrets: bundle.playerSecrets
+        });
+      } else {
+        await saveAndRender();
+      }
+      break;
+
+    case "dw-lobby-theme":
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      room = DrawingWerewolfGame.selectLobbyTheme(room, data.dwTheme || data.theme);
+      await saveAndRender();
+      break;
+
+    case "dw-lobby-wolves": {
+      if (!DrawingWerewolfGame.canManage(ctx)) return;
+      const delta = parseInt(data.delta, 10);
+      if (!delta) return;
+      room = DrawingWerewolfGame.adjustLobbyWolfCount(room, delta);
+      await saveAndRender();
+      break;
+    }
+
+    /* --- NGワードゲーム --- */
+    case "ng-lobby-theme":
+      if (!NgWordGame.canManage(ctx)) return;
+      if (!data.theme) return;
+      room = NgWordGame.selectLobbyTheme(room, data.theme);
+      await saveAndRender();
+      break;
+
+    case "ng-violation": {
+      if (!data.player) {
+        showToast("対象プレイヤーを選んでください");
+        return;
+      }
+      if (ctx.me && NgWordGame.isEliminated(room, ctx.me.id)) {
+        showToast("脱落したため早押しできません");
+        return;
+      }
+      if (ctx.me && data.player === ctx.me.id) {
+        showToast("自分自身は選べません");
+        return;
+      }
+      const target = room.players.find(function (p) { return p.id === data.player; });
+      if (!target) return;
+      const actorId = ctx.me ? ctx.me.id : null;
+      if (!NgWordGame.canBuzzTarget(room, data.player, actorId)) {
+        const violation = NgWordGame.getViolation(room.gameState, data.player);
+        if (actorId && violation && violation.buzzers.indexOf(actorId) >= 0) {
+          showToast("すでに押しています");
+        } else if (NgWordGame.getNextBuzzPoints(room, data.player) <= 0) {
+          showToast("これ以上点は入りません");
+        } else {
+          showToast(target.name + " さんには今押せません");
+        }
+        return;
+      }
+      const outcome = NgWordGame.markPlayerViolation(room, data.player, actorId);
+      room = outcome.room;
+      const result = outcome.result;
+      if (result.duplicate) {
+        showToast("すでに押しています");
+        return;
+      }
+      if (result.noPoints) {
+        showToast("これ以上点は入りません");
+        return;
+      }
+      if (room.phase === "ngword_end") {
+        room = NgWordGame.prepareEndReveal(room, ctx);
+      }
+      if (room.phase === "ngword_end" && room.gameState.winnerId) {
+        const winner = room.players.find(function (p) { return p.id === room.gameState.winnerId; });
+        showToast((winner ? winner.name : "プレイヤー") + " さんの勝利！（" + (room.gameState.scores[room.gameState.winnerId] || 0) + "点）");
+      } else if (actorId) {
+        const actor = room.players.find(function (p) { return p.id === actorId; });
+        let toast = "⚡ +" + result.points + "点！" + (actor ? actor.name : "あなた");
+        if (result.targetEliminated) {
+          toast += "（" + target.name + " さん脱落）";
+        }
+        showToast(toast);
+      } else {
+        let toast = target.name + " さんがNGワードを言いました";
+        if (result.targetEliminated) toast += "（脱落）";
+        showToast(toast);
+      }
+      await saveAndRender();
+      break;
+    }
+
+    case "ng-next-view":
+      if (room.mode !== "local") return;
+      room = NgWordGame.cycleViewPlayer(room);
+      await saveAndRender();
+      break;
+
+    case "ng-finish":
+      if (!NgWordGame.canManage(ctx)) return;
+      room = NgWordGame.finishSession(room);
+      room = NgWordGame.prepareEndReveal(room, ctx);
+      await saveAndRender();
       break;
 
     /* --- コヨーテ --- */
@@ -2174,22 +3473,45 @@ async function handleAction(action, data, ctx) {
       if (!cardId) { showToast("カードを選んでください"); return; }
 
       const gs = room.gameState;
-      if (!gs.hands) gs.hands = {};
-      const result = SevensGame.playCard(room, actingId, cardId, gs.hands);
-      if (!result.ok) { showToast(result.error || "出せません"); return; }
-      SevensGame.clearSelected();
-      if (room.phase === "sevens_result") showToast("勝者が決まりました！");
-      await saveAndRender();
+      if (!ctx.isOnline) {
+        if (!gs.hands) gs.hands = {};
+        const result = SevensGame.playCard(room, actingId, cardId, gs.hands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
+        SevensGame.clearSelected();
+        if (room.phase === "sevens_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+        break;
+      }
+
+      await withOnlineMutation(async function () {
+        if (!gs.hands) gs.hands = {};
+        const hand = SevensGame.getHand(ctx, ctx.me.id);
+        if (!gs.hands[ctx.me.id]) gs.hands[ctx.me.id] = hand;
+        const result = SevensGame.playCard(room, ctx.me.id, cardId, gs.hands);
+        if (!result.ok) { showToast(result.error || "出せません"); return; }
+        SevensGame.clearSelected();
+        if (room.phase === "sevens_result") showToast("勝者が決まりました！");
+        await saveAndRender();
+      });
       break;
     }
 
     case "sv-pass": {
       const actingId = SevensGame._actingPlayer(ctx);
       if (!SevensGame.isMyTurn(ctx)) return;
-      const result = SevensGame.pass(room, actingId);
-      if (!result.ok) { showToast(result.error || "パスできません"); return; }
-      SevensGame.clearSelected();
-      await saveAndRender();
+      if (!ctx.isOnline) {
+        const result = SevensGame.pass(room, actingId);
+        if (!result.ok) { showToast(result.error || "パスできません"); return; }
+        SevensGame.clearSelected();
+        await saveAndRender();
+        break;
+      }
+      await withOnlineMutation(async function () {
+        const result = SevensGame.pass(room, actingId);
+        if (!result.ok) { showToast(result.error || "パスできません"); return; }
+        SevensGame.clearSelected();
+        await saveAndRender();
+      });
       break;
     }
 
@@ -2201,8 +3523,18 @@ async function handleAction(action, data, ctx) {
     case "pk-allin": {
       const pk = getPokerGame(room);
       if (!pk) return;
+      if (roomActionLock) return;
       const actingId = pk._actingPlayer(ctx);
       if (!pk.isMyTurn(ctx)) { showToast("あなたの番ではありません"); return; }
+      let pokerAction = action;
+      const toCall = PokerUtils.amountToCall(room.gameState, actingId);
+      if (action === "pk-call" && toCall <= 0) {
+        pokerAction = "pk-check";
+      }
+      if (action === "pk-check" && toCall > 0) {
+        showToast("コールが必要です（" + toCall + "）");
+        return;
+      }
       const actMap = {
         "pk-fold": "fold",
         "pk-check": "check",
@@ -2211,10 +3543,23 @@ async function handleAction(action, data, ctx) {
         "pk-allin": "allin"
       };
       const amount = data.amount ? parseInt(data.amount, 10) : null;
-      const result = pk.doAction(room, actingId, actMap[action], amount);
+      if (ctx.isOnline && isHost()) {
+        PokerUtils.attachHostSecrets(room, hostSecrets);
+      }
+      const pokerOpts = ctx.isOnline
+        ? { isOnline: true, isHost: ctx.isHost, hostSecrets: hostSecrets }
+        : null;
+      const result = pk.doAction(room, actingId, actMap[pokerAction], amount, pokerOpts);
       if (!result.ok) { showToast(result.error || "できません"); return; }
+      if (ctx.isOnline && isHost() && hostSecrets) {
+        PokerUtils.syncHostSecretsFromState(room.gameState, hostSecrets);
+      }
       if (room.phase === "poker_showdown") showToast("ハンド終了！");
-      await saveAndRender();
+      if (ctx.isOnline) {
+        await savePokerOnlineState();
+      } else {
+        await saveAndRender();
+      }
       break;
     }
 
@@ -2222,9 +3567,16 @@ async function handleAction(action, data, ctx) {
       if (!ctx.isHost) return;
       const pk = getPokerGame(room);
       if (!pk) return;
+      if (ctx.isOnline) {
+        PokerUtils.attachHostSecrets(room, hostSecrets);
+      }
       room = pk.nextHand(room);
       if (room.phase === "poker_result") showToast("ゲーム終了！");
-      await saveAndRender();
+      if (ctx.isOnline) {
+        await savePokerOnlineState();
+      } else {
+        await saveAndRender();
+      }
       break;
     }
 
@@ -2388,6 +3740,10 @@ async function handleAction(action, data, ctx) {
       break;
 
     case "shogi-cell": {
+      if (!ShogiGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const row = parseInt(data.row, 10);
       const col = parseInt(data.col, 10);
       const result = ShogiGame.selectSquare(room, row, col);
@@ -2404,6 +3760,10 @@ async function handleAction(action, data, ctx) {
     }
 
     case "shogi-drop": {
+      if (!ShogiGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const result = ShogiGame.selectDrop(room, data.piece);
       if (!result.ok) {
         showToast(result.error || "打てません");
@@ -2418,6 +3778,10 @@ async function handleAction(action, data, ctx) {
     }
 
     case "shogi-promote": {
+      if (!ShogiGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const result = ShogiGame.confirmPromotion(room, data.promote === "1");
       if (!result.ok) {
         showToast(result.error || "指せません");
@@ -2432,6 +3796,10 @@ async function handleAction(action, data, ctx) {
     }
 
     case "shogi-cancel-promo": {
+      if (!ShogiGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
       const result = ShogiGame.cancelPromotion(room);
       if (!result.ok) return;
       room = result.room;
@@ -2439,10 +3807,16 @@ async function handleAction(action, data, ctx) {
       break;
     }
 
-    case "shogi-resign":
-      room = ShogiGame.resign(room, room.gameState.turn);
+    case "shogi-resign": {
+      if (!ShogiGame.isMyTurn(ctx)) {
+        showToast("あなたの番ではありません");
+        return;
+      }
+      const side = ShogiGame.getSideForPlayer(room, ctx.me.id);
+      room = ShogiGame.resign(room, side != null ? side : room.gameState.turn);
       await saveAndRender();
       break;
+    }
 
     case "shogi-restart":
       if (!ctx.isHost) return;
@@ -2452,26 +3826,44 @@ async function handleAction(action, data, ctx) {
   }
 }
 
-async function saveNgRound(ctx) {
-  const newCard = room.gameState.card;
-  const explainerId = room.gameState.explainerId;
+window.__daifugoRunAutoPass = async function (expectedKey) {
+  try {
+    if (!room || room.game !== "daifugo") return;
+    const ctx = buildCtx();
+    const gs = room.gameState;
+    if (!gs) return;
+    if (expectedKey && DaifugoGame._autoPassStateKey(gs) !== expectedKey) return;
+    if (!DaifugoGame.shouldAutoPass(ctx)) return;
 
-  if (Sync.isOnline()) {
-    room.gameState.card = null;
-    await Sync.save(room);
-    room.gameState.card = newCard;
-    await Sync.updatePlayerSecret(roomCode, explainerId, { ngCard: newCard });
-    if (hostSecrets) {
-      hostSecrets.ngCard = newCard;
-      await Sync.updateHostSecrets(roomCode, { ngCard: newCard });
+    const actingId = DaifugoGame._actingPlayer(ctx);
+    DaifugoGame.cancelAutoPass();
+    DaifugoGame.showAutoPassNotice();
+
+    if (!ctx.isOnline) {
+      const result = DaifugoGame.pass(room, actingId);
+      if (!result.ok) {
+        showToast(result.error || "パスできません");
+        return;
+      }
+      DaifugoGame.clearSelected();
+      await saveAndRender();
+      return;
     }
-    if (explainerId === ctx.me.id) {
-      playerSecret = playerSecret || {};
-      playerSecret.ngCard = newCard;
-    }
+
+    await withOnlineMutation(async function () {
+      const result = DaifugoGame.pass(room, actingId);
+      if (!result.ok) {
+        showToast(result.error || "パスできません");
+        return;
+      }
+      DaifugoGame.clearSelected();
+      await saveAndRender();
+    });
+  } catch (err) {
+    console.error(err);
+    showToast(err && err.message ? err.message : "自動パスに失敗しました");
   }
-  await saveAndRender();
-}
+};
 
 window.addEventListener("beforeunload", function () {
   Sync.unsubscribe();

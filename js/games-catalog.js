@@ -30,7 +30,7 @@ const GamesCatalog = {
     const badge = game.status === "soon"
       ? '<span class="badge badge-soon">準備中</span>'
       : "";
-    const players = game.minPlayers + "〜" + game.maxPlayers + "人";
+    const players = GameRegistry.formatPlayers(game.minPlayers, game.maxPlayers);
 
     let html = '<article class="play-tile' + (game.status === "soon" ? " is-soon" : "") + '">';
     html += '<div class="play-tile-top">' + this.renderGameIcon(game) + badge + '</div>';
@@ -53,7 +53,7 @@ const GamesCatalog = {
     const badge = game.status === "live"
       ? '<span class="badge badge-live">遊ぶ</span>'
       : '<span class="badge badge-soon">準備中</span>';
-    const players = game.minPlayers + "〜" + game.maxPlayers + "人";
+    const players = GameRegistry.formatPlayers(game.minPlayers, game.maxPlayers);
     const cat = GAME_CATEGORIES[game.category];
 
     return (
@@ -124,7 +124,7 @@ const GamesCatalog = {
     const self = this;
     Object.keys(GAME_CATEGORIES).forEach(function (key) {
       const cat = GAME_CATEGORIES[key];
-      const games = GameRegistry.byCategory(key);
+      const games = GameRegistry.catalogByCategory(key);
       const live = games.filter(function (g) { return g.status === "live"; }).length;
       html += '<a href="#cat-' + key + '" class="category-hub-card">';
       html += self.renderCategoryIcon(cat);
@@ -137,7 +137,7 @@ const GamesCatalog = {
     html += "</div></section>";
 
     Object.keys(GAME_CATEGORIES).forEach(function (key) {
-      html += self.renderCategoryPlaySection(key, GameRegistry.byCategory(key));
+      html += self.renderCategoryPlaySection(key, GameRegistry.catalogByCategory(key));
     });
 
     return html;
@@ -145,7 +145,7 @@ const GamesCatalog = {
 
   renderHomeCatalog: function () {
     const counts = GameRegistry.countByStatus();
-    const games = GameRegistry.all().slice().sort(function (a, b) {
+    const games = GameRegistry.catalogGames().slice().sort(function (a, b) {
       if (a.status === "live" && b.status !== "live") return -1;
       if (a.status !== "live" && b.status === "live") return 1;
       const ao = a.priorityOrder || 999;
@@ -193,33 +193,76 @@ const GamesCatalog = {
     html += '<button class="filter-btn is-active" data-filter="all">すべて</button>';
     Object.keys(GAME_CATEGORIES).forEach(function (key) {
       const c = GAME_CATEGORIES[key];
-      const n = GameRegistry.byCategory(key).length;
+      const n = GameRegistry.catalogByCategory(key).length;
       html += '<button class="filter-btn" data-filter="' + key + '">' + c.icon + ' ' + c.name + ' (' + n + ')</button>';
     });
     html += '</div></section>';
 
     Object.keys(GAME_CATEGORIES).forEach(function (key) {
       if (filterCategory && filterCategory !== key) return;
-      const games = GameRegistry.byCategory(key);
+      const games = GameRegistry.catalogByCategory(key);
       html += GamesCatalog.renderCategorySection(key, games);
     });
 
     return html;
   },
 
+  renderGameRulesPanel: function (g) {
+    if (g.id === "werewolf" && typeof WerewolfGame !== "undefined" && WerewolfGame.renderGameGuide) {
+      return WerewolfGame.renderGameGuide();
+    }
+    const rules = typeof GameRegistry.getRules === "function" ? GameRegistry.getRules(g.id) : null;
+    if (!rules || (Array.isArray(rules) && !rules.length)) return "";
+
+    let html = '<div class="guide-toggle-wrap">';
+    html += '<button type="button" class="btn btn-primary guide-toggle-btn" data-guide-toggle="' +
+      escapeHtml(g.id) + '" aria-expanded="false">ルールを見る</button>';
+    html += '<div class="guide-toggle-panel hidden" id="guide-' + escapeHtml(g.id) + '">';
+
+    if (Array.isArray(rules)) {
+      html += '<ul class="clue-list guide-rules-list">';
+      rules.forEach(function (line) {
+        html += "<li>" + escapeHtml(line) + "</li>";
+      });
+      html += "</ul>";
+    } else {
+      if (rules.summary) {
+        html += '<p class="guide-rules-summary">' + escapeHtml(rules.summary) + "</p>";
+      }
+      (rules.sections || []).forEach(function (sec) {
+        html += '<section class="guide-rules-section">';
+        if (sec.title) html += '<h4 class="guide-rules-heading">' + escapeHtml(sec.title) + "</h4>";
+        if (sec.body) html += '<p class="guide-rules-body">' + escapeHtml(sec.body) + "</p>";
+        if (sec.items && sec.items.length) {
+          html += '<ul class="clue-list guide-rules-list">';
+          sec.items.forEach(function (line) {
+            html += "<li>" + escapeHtml(line) + "</li>";
+          });
+          html += "</ul>";
+        }
+        html += "</section>";
+      });
+    }
+
+    html += "</div></div>";
+    return html;
+  },
+
   renderGuidePage: function () {
+    const counts = GameRegistry.countByStatus();
     let html = '<section class="guide-intro">';
-    html += '<h1>遊び方ガイド</h1>';
-    html += '<p class="section-lead">ゲームを選んで遊んでください。現在は<strong>人狼のみ</strong>遊べます。</p>';
-    html += '</section>';
+    html += "<h1>遊び方ガイド</h1>";
+    html += '<p class="section-lead">各ゲームのルールです。遊べるタイトルは<strong>' + counts.live +
+      "</strong>、準備中は<strong>" + counts.soon + "</strong>あります。</p>";
+    html += "</section>";
 
     Object.keys(GAME_CATEGORIES).forEach(function (key) {
       const cat = GAME_CATEGORIES[key];
-      const games = GameRegistry.byCategory(key);
+      const games = GameRegistry.catalogByCategory(key);
       if (!games.length) return;
 
       html += '<section class="guide-block">';
-      html += '<h2 class="guide-block-title">' + cat.icon + ' ' + cat.name + '</h2>';
+      html += '<h2 class="guide-block-title">' + cat.icon + " " + cat.name + "</h2>";
 
       games.forEach(function (g) {
         const badge = g.status === "live"
@@ -227,25 +270,23 @@ const GamesCatalog = {
           : '<span class="badge badge-soon">準備中</span>';
 
         html += '<article class="guide-item" id="' + escapeHtml(g.id) + '">';
-        html += '<div class="guide-item-head"><h3>' + escapeHtml(g.name) + '</h3>' + badge + '</div>';
-        html += '<p>' + escapeHtml(g.description) + '</p>';
-        if (g.id === "werewolf" && typeof WerewolfGame !== "undefined") {
-          html += WerewolfGame.renderGameGuide();
-        }
+        html += '<div class="guide-item-head"><h3>' + escapeHtml(g.name) + "</h3>" + badge + "</div>";
+        html += "<p>" + escapeHtml(g.description) + "</p>";
+        html += GamesCatalog.renderGameRulesPanel(g);
         html += '<div class="guide-item-foot">';
-        html += '<span class="play-tile-meta">👥 ' + g.minPlayers + '〜' + g.maxPlayers + '人</span>';
+        html += '<span class="play-tile-meta">👥 ' + GameRegistry.formatPlayers(g.minPlayers, g.maxPlayers) + "</span>";
         if (g.status === "live") {
           html += '<div class="guide-item-play">';
-          html += '<a href="play.html?v=20260712&game=' + encodeURIComponent(g.id) + '" class="btn btn-primary">このゲームで遊ぶ</a>';
+          html += '<a href="play.html?v=20260715&game=' + encodeURIComponent(g.id) + '" class="btn btn-primary">このゲームで遊ぶ</a>';
           if (g.playCaution) {
             html += '<span class="play-tile-caution">' + escapeHtml(g.playCaution) + "</span>";
           }
           html += "</div>";
         }
-        html += '</div></article>';
+        html += "</div></article>";
       });
 
-      html += '</section>';
+      html += "</section>";
     });
 
     return html;

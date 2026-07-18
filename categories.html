@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta name="description" content="ボードゲーム・カードゲーム・協力ゲームなど、ジャンル別にブラウザで遊べるゲームを探せます。">
+  <meta name="description" content="ボードゲーム・トランプ・協力ゲームなど、ジャンル別にブラウザで遊べるゲームを探せます。">
   <link rel="canonical" href="http://browser-trump-board.com/games/categories.html">
   <title>カテゴリ | ブラウザ・トランプ＆ボード</title>
   <link rel="stylesheet" href="css/style.css">
@@ -33,11 +33,11 @@
     <p><a href="index.html" class="text-link">ゲーム一覧へ</a> · <a href="guide.html" class="text-link">遊び方ガイド</a></p>
   </footer>
 
-  <script src="js/utils.js"></script>
+  <script src="js/ensure-utils.js?v=20260713-revert3"></script>
   <script src="js/stats-boot.js"></script>
   <script src="js/stats.js"></script>
-  <script src="js/game-registry.js"></script>
-  <script src="js/games-catalog.js"></script>
+  <script src="js/game-registry.js?v=20260715-dwkana"></script>
+  <script src="js/games-catalog.js?v=20260713-duel-rename"></script>
   <script>
     (function () {
       document.getElementById("categoriesApp").innerHTML = GamesCatalog.renderCategoriesPage();
