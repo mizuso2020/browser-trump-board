@@ -127,10 +127,11 @@ const GAME_REGISTRY = {
     description: "4枚のカードを裏向きで出し、嘘か本当かを見破る心理戦トランプ",
     minPlayers: 2,
     maxPlayers: 4,
-    status: "soon",
+    status: "live",
     featured: true,
     priority: true,
     priorityOrder: 2,
+    modesSoon: ["online"],
     module: "DoubtGame"
   },
   wordwolf: {
@@ -155,10 +156,11 @@ const GAME_REGISTRY = {
     description: "数字カードを裏向きで重ね、合計を超えたら負け。ブラフが楽しい",
     minPlayers: 3,
     maxPlayers: 6,
-    status: "soon",
+    status: "live",
     featured: true,
     priority: true,
     priorityOrder: 5,
+    modesSoon: ["online"],
     module: "CoyoteGame"
   },
   codenames: {
@@ -168,10 +170,11 @@ const GAME_REGISTRY = {
     description: "スパイマスターの1語ヒントで、自チームのワードを当てる",
     minPlayers: 4,
     maxPlayers: 8,
-    status: "soon",
+    status: "live",
     featured: true,
     priority: true,
     priorityOrder: 6,
+    modesSoon: ["online"],
     module: "CodenamesGame"
   },
   skull: {
@@ -230,8 +233,9 @@ const GAME_REGISTRY = {
     description: "ペアを揃えて手札を減らす。最後にジョーカーが残った人の負け",
     minPlayers: 2,
     maxPlayers: 6,
-    status: "soon",
+    status: "live",
     featured: true,
+    modesSoon: ["online"],
     module: "OldMaidGame"
   },
   sevens: {
@@ -241,8 +245,9 @@ const GAME_REGISTRY = {
     description: "7を中心に並べていく定番トランプ",
     minPlayers: 2,
     maxPlayers: 4,
-    status: "soon",
+    status: "live",
     featured: true,
+    modesSoon: ["online"],
     module: "SevensGame"
   },
   memory: {
@@ -315,8 +320,9 @@ const GAME_REGISTRY = {
     description: "場札なし。最大7枚から5枚で役を作る昔ながらのポーカー",
     minPlayers: 2,
     maxPlayers: 8,
-    status: "soon",
+    status: "live",
     featured: true,
+    modesSoon: ["local", "online"],
     module: "SevenStudGame"
   },
   five_draw: {
@@ -326,8 +332,9 @@ const GAME_REGISTRY = {
     description: "5枚配られ、カードを交換して役を作る。映画でおなじみのポーカー",
     minPlayers: 2,
     maxPlayers: 6,
-    status: "soon",
+    status: "live",
     featured: true,
+    modesSoon: ["local", "online"],
     module: "FiveDrawGame"
   },
   reversi: {
@@ -432,7 +439,7 @@ const GAME_REGISTRY = {
   }
 };
 
-const CATALOG_SOON_IDS = ["chinchiro", "codenames", "chess"];
+const CATALOG_SOON_IDS = ["chinchiro", "chess"];
 
 /** 遊び方ガイド用ルール */
 const GAME_RULES = {
