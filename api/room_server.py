@@ -4,6 +4,7 @@
 import json
 import os
 import re
+import secrets as token_lib
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -29,12 +30,94 @@ GAME_MAX_PLAYERS = {
     "reversi": 2,
     "gomoku": 2,
     "shogi": 2,
+    "ngword": 8,
+    "daifugo": 8,
+    "skull": 6,
+    "blackjack": 7,
+    "ninetyNine": 6,
+    "texas_holdem": 9,
 }
 
 
 def room_max_players(public):
     game_id = public.get("pendingGame") or public.get("game")
     return GAME_MAX_PLAYERS.get(game_id, 16)
+
+
+# --- 参加者トークン ---------------------------------------------------------
+# 役職・手札・お題などの秘密情報は、本人（と進行役のホスト）だけが読めるように
+# する。ルーム作成・参加のときにプレイヤーごとのトークンを発行し、以後は
+# X-Room-Token ヘッダーで本人確認する。
+#
+# 再接続用の resolve-player はトークンを返さない。名前を言うだけでトークンが
+# もらえてしまうと、他人になりすまして秘密を読めるため。
+
+
+def tokens_path(code):
+    return os.path.join(room_path(code), "tokens.json")
+
+
+def read_tokens(code):
+    data = read_json(tokens_path(code))
+    if not isinstance(data, dict):
+        return None
+    if not isinstance(data.get("players"), dict):
+        data["players"] = {}
+    return data
+
+
+def issue_token(code, player_id, is_host=False):
+    """このプレイヤーのトークンを発行（既にあれば再利用）して返す。"""
+    data = read_tokens(code) or {"hostId": None, "players": {}}
+    token = data["players"].get(player_id)
+    if not token:
+        token = token_lib.token_urlsafe(24)
+        data["players"][player_id] = token
+    if is_host and not data.get("hostId"):
+        data["hostId"] = player_id
+    write_json(tokens_path(code), data)
+    return token
+
+
+def request_token(handler):
+    return (handler.headers.get("X-Room-Token") or "").strip()
+
+
+def token_owner(code, token):
+    """そのトークンの持ち主のプレイヤーIDを返す。不明なら None。"""
+    if not token:
+        return None
+    data = read_tokens(code)
+    if not data:
+        return None
+    for pid, value in data["players"].items():
+        if token_lib.compare_digest(str(value), token):
+            return pid
+    return None
+
+
+def is_legacy_room(code):
+    """この機能より前に作られたルーム。進行中のゲームを壊さないため素通しする。"""
+    return read_tokens(code) is None
+
+
+def may_read_private(code, player_id, handler):
+    """本人か、進行役のホストだけ許可。"""
+    if is_legacy_room(code):
+        return True
+    owner = token_owner(code, request_token(handler))
+    if owner is None:
+        return False
+    if owner == player_id:
+        return True
+    return owner == (read_tokens(code) or {}).get("hostId")
+
+
+def may_act_as_host(code, handler):
+    if is_legacy_room(code):
+        return True
+    owner = token_owner(code, request_token(handler))
+    return owner is not None and owner == (read_tokens(code) or {}).get("hostId")
 
 
 def ensure_dirs():
@@ -193,7 +276,7 @@ def json_response(handler, status, payload):
     handler.send_header("Pragma", "no-cache")
     handler.send_header("Access-Control-Allow-Origin", "*")
     handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-    handler.send_header("Access-Control-Allow-Headers", "Content-Type")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type, X-Room-Token")
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -221,7 +304,7 @@ class RoomHandler(BaseHTTPRequestHandler):
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
         self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Room-Token")
         self.end_headers()
 
     def do_GET(self):
@@ -243,6 +326,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             player_id = parts[3]
             if not CODE_RE.match(code) or not PLAYER_RE.match(player_id):
                 return json_response(self, 400, {"error": "invalid path"})
+            if not may_read_private(code, player_id, self):
+                return json_response(self, 403, {"error": "forbidden"})
             data = read_json(os.path.join(room_path(code), "private", player_id + ".json"))
             if not data:
                 return json_response(self, 404, {"error": "not found"})
@@ -252,6 +337,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             code = parts[1].upper()
             if not CODE_RE.match(code):
                 return json_response(self, 400, {"error": "invalid code"})
+            if not may_act_as_host(code, self):
+                return json_response(self, 403, {"error": "forbidden"})
             data = read_json(os.path.join(room_path(code), "hostSecrets.json"))
             if not data:
                 return json_response(self, 404, {"error": "not found"})
@@ -287,6 +374,11 @@ class RoomHandler(BaseHTTPRequestHandler):
             if not isinstance(public, dict):
                 return json_response(self, 400, {"error": "invalid public"})
             public_path = os.path.join(room_path(code), "public.json")
+            carries_secrets = body.get("hostSecrets") is not None or isinstance(
+                body.get("playerSecrets"), dict
+            )
+            if carries_secrets and not may_act_as_host(code, self):
+                return json_response(self, 403, {"error": "forbidden"})
             old_public = read_json(public_path)
             reject = reject_public_put(old_public, public)
             if reject:
@@ -314,6 +406,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             player_id = parts[3]
             if not CODE_RE.match(code) or not PLAYER_RE.match(player_id):
                 return json_response(self, 400, {"error": "invalid path"})
+            if not may_read_private(code, player_id, self):
+                return json_response(self, 403, {"error": "forbidden"})
             write_json(os.path.join(room_path(code), "private", player_id + ".json"), body)
             return json_response(self, 200, {"ok": True})
 
@@ -321,6 +415,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             code = parts[1].upper()
             if not CODE_RE.match(code):
                 return json_response(self, 400, {"error": "invalid code"})
+            if not may_act_as_host(code, self):
+                return json_response(self, 403, {"error": "forbidden"})
             path = os.path.join(room_path(code), "hostSecrets.json")
             old = read_json(path)
             if isinstance(old, dict) and isinstance(body, dict):
@@ -359,7 +455,14 @@ class RoomHandler(BaseHTTPRequestHandler):
                 return json_response(self, 400, {"error": "public required"})
             public["updatedAt"] = int(time.time() * 1000)
             write_json(os.path.join(room_path(code), "public.json"), public)
-            return json_response(self, 200, {"ok": True})
+            host_id = public.get("hostId")
+            if not PLAYER_RE.match(str(host_id or "")):
+                players = public.get("players") or []
+                host_id = players[0].get("id") if players else None
+            if not PLAYER_RE.match(str(host_id or "")):
+                return json_response(self, 400, {"error": "invalid host"})
+            token = issue_token(code, host_id, is_host=True)
+            return json_response(self, 200, {"ok": True, "playerId": host_id, "token": token})
 
         if len(parts) == 3 and parts[0] == "room" and parts[2] == "join":
             code = parts[1].upper()
@@ -384,7 +487,10 @@ class RoomHandler(BaseHTTPRequestHandler):
                 public["players"] = players
                 public["updatedAt"] = int(time.time() * 1000)
                 write_json(public_path, public)
-            return json_response(self, 200, public)
+            # 参加できた人にだけトークンを渡す（保存はせず、この応答にのみ載せる）
+            response = dict(public)
+            response["_token"] = issue_token(code, player_id)
+            return json_response(self, 200, response)
 
         if len(parts) == 3 and parts[0] == "room" and parts[2] == "resolve-player":
             code = parts[1].upper()

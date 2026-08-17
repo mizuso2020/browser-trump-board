@@ -72,9 +72,67 @@ const Sync = {
 
 
 
+  /* --- 参加者トークン ---
+
+     役職・手札・お題は本人（と進行役のホスト）しか読めないよう、サーバー側で
+
+     X-Room-Token を検証している。トークンはルーム作成・参加のときに受け取り、
+
+     ルームコードごとに localStorage へ保存する。 */
+
+
+
+  tokenKey: function (code) {
+
+    // プレイヤーIDまで含める。1台のブラウザで別の人が入り直しても混ざらないように。
+
+    return "partyGames_roomToken_" + String(code || "").toUpperCase() + "_" + this.uid;
+
+  },
+
+
+
+  saveRoomToken: function (code, token) {
+
+    if (!code || !token) return;
+
+    try { localStorage.setItem(this.tokenKey(code), token); } catch (e) { /* ignore */ }
+
+  },
+
+
+
+  getRoomToken: function (code) {
+
+    if (!code) return "";
+
+    try { return localStorage.getItem(this.tokenKey(code)) || ""; } catch (e) { return ""; }
+
+  },
+
+
+
+  roomCodeFromPath: function (url) {
+
+    const m = /^\/room\/([A-Za-z0-9]{4})(\/|\?|$)/.exec(String(url || ""));
+
+    return m ? m[1].toUpperCase() : "";
+
+  },
+
+
+
   apiFetch: async function (url, options) {
 
     const opts = Object.assign({ cache: "no-store" }, options || {});
+
+    const token = this.getRoomToken(this.roomCodeFromPath(url));
+
+    if (token) {
+
+      opts.headers = Object.assign({}, opts.headers || {}, { "X-Room-Token": token });
+
+    }
 
     if ((!opts.method || opts.method === "GET") && url.indexOf("/room/") === 0) {
 
@@ -282,7 +340,7 @@ const Sync = {
 
 
 
-    await this.apiFetch("/room/" + room.code + "/create", {
+    const created = await this.apiFetch("/room/" + room.code + "/create", {
 
       method: "POST",
 
@@ -292,6 +350,12 @@ const Sync = {
 
     });
 
+    if (created && created.token) {
+
+      this.saveRoomToken(room.code, created.token);
+
+    }
+
     return room;
 
   },
@@ -300,7 +364,9 @@ const Sync = {
 
   joinServer: async function (code, name) {
 
-    return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/join", {
+    const roomCode = String(code || "").toUpperCase();
+
+    const joined = await this.apiFetch("/room/" + roomCode + "/join", {
 
       method: "POST",
 
@@ -309,6 +375,16 @@ const Sync = {
       body: JSON.stringify({ playerId: this.uid, name: name })
 
     });
+
+    if (joined && joined._token) {
+
+      this.saveRoomToken(roomCode, joined._token);
+
+      delete joined._token;
+
+    }
+
+    return joined;
 
   },
 
