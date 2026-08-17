@@ -21,3 +21,6 @@ venv/
 # Logs / temp
 *.log
 tmp/
+
+# ローカルサーバーが起動時に生成する実行時ファイル
+.server-port
