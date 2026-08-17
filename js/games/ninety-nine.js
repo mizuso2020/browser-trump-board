@@ -420,7 +420,7 @@ const NinetyNineGame = {
       html.push('</section>');
     }
 
-    html.push(TrumpUi.renderFooter({ rulesAction: "nn-rules-toggle" });
+    html.push(TrumpUi.renderFooter({ rulesAction: "nn-rules-toggle" }));
     html.push(TrumpUi.renderRulesPanel(
       "nnRulesPanel",
       "ルール・カード効果",

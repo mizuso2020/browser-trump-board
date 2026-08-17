@@ -436,7 +436,7 @@ const MatryoshkaTttGame = {
     if (!gs.finished && current) {
       html += TrumpUi.renderTurnOrderBlock(ctx.room, {}, {
         turnPlayerId: current.id,
-        orderIds: (room.players || []).map(function (p) { return p.id; })
+        orderIds: (ctx.room.players || []).map(function (p) { return p.id; })
       });
     }
 

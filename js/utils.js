@@ -187,7 +187,7 @@ const TrumpUi = {
     if (options.localRulesAction) {
       html.push(
         '<button type="button" class="btn btn-secondary" data-action="' +
-        options.localRulesAction + '">ローカルルール</button>"
+        options.localRulesAction + '">ローカルルール</button>'
       );
     }
 
