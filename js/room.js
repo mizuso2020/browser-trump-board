@@ -3883,6 +3883,8 @@ const Chat = {
   open: false,
   timer: null,
   sending: false,
+  writable: "main",   // サーバーが決める。死ぬと "spirit" になる
+  channels: ["main"],
 
   el: function (id) { return document.getElementById(id); },
 
@@ -3912,6 +3914,13 @@ const Chat = {
       self.send("text", text);
     });
 
+    this.el("chatLog").addEventListener("click", function (e) {
+      const btn = e.target.closest("[data-report-message]");
+      if (btn) self.report(btn.dataset);
+    });
+
+    this.applyChannelState();
+
     this.poll();
     this.timer = setInterval(function () { self.poll(); }, 3000);
   },
@@ -3930,8 +3939,31 @@ const Chat = {
   poll: async function () {
     if (!room || !room.code) return;
     const data = await Sync.fetchMessages(room.code, this.lastId);
-    if (!data || !Array.isArray(data.items) || !data.items.length) return;
-    this.append(data.items);
+    if (!data) return;
+    if (data.writable && data.writable !== this.writable) {
+      this.writable = data.writable;
+      this.channels = data.channels || ["main"];
+      this.applyChannelState();
+    }
+    if (Array.isArray(data.items) && data.items.length) this.append(data.items);
+  },
+
+  /** 霊界に落ちたら、その場で入力欄の見え方を変える。
+   *  発言先の判定はサーバー側が持っているので、ここは表示だけ。 */
+  applyChannelState: function () {
+    const spirit = this.writable === "spirit";
+    const note = this.el("chatChannelNote");
+    const input = this.el("chatInput");
+    this.el("chatPanel").classList.toggle("chat-panel--spirit", spirit);
+    if (note) {
+      note.textContent = spirit
+        ? "👻 霊界　あなたの発言は、亡くなった人にだけ見えます"
+        : "";
+      note.classList.toggle("hidden", !spirit);
+    }
+    if (input) {
+      input.placeholder = spirit ? "霊界にメッセージを送る" : "メッセージを入力";
+    }
   },
 
   append: function (items) {
@@ -3942,11 +3974,20 @@ const Chat = {
       self.lastId = m.id;
       const me = getMe();
       const mine = !!(me && me.id === m.playerId);
+      const isSpirit = (m.channel || "main") === "spirit";
       const row = document.createElement("div");
-      row.className = "chat-row" + (mine ? " chat-row--mine" : "") + (m.kind === "stamp" ? " chat-row--stamp" : "");
+      row.className = "chat-row" +
+        (mine ? " chat-row--mine" : "") +
+        (m.kind === "stamp" ? " chat-row--stamp" : "") +
+        (isSpirit ? " chat-row--spirit" : "");
       row.innerHTML =
-        '<span class="chat-name">' + escapeHtml(m.name || "?") + "</span>" +
-        '<span class="chat-text">' + escapeHtml(m.body || "") + "</span>";
+        '<span class="chat-name">' + (isSpirit ? "👻 " : "") + escapeHtml(m.name || "?") + "</span>" +
+        '<span class="chat-text">' + escapeHtml(m.body || "") + "</span>" +
+        (mine ? "" :
+          '<button type="button" class="chat-report" title="通報する"' +
+          ' data-report-message="' + escapeHtml(String(m.id)) + '"' +
+          ' data-report-player="' + escapeHtml(m.playerId || "") + '"' +
+          ' data-report-name="' + escapeHtml(m.name || "") + '">⚠</button>');
       log.appendChild(row);
       if (!self.open) self.unread += 1;
     });
@@ -3961,6 +4002,28 @@ const Chat = {
   scrollToEnd: function () {
     const log = this.el("chatLog");
     if (log) log.scrollTop = log.scrollHeight;
+  },
+
+  /** 通報は記録するだけ。自動で誰かを弾いたりはしない（誤報のほうが害が大きい）。
+   *  その場の対処はホストのキックに任せる。 */
+  report: async function (data) {
+    const who = data.reportName || "この人";
+    const reason = window.prompt(
+      who + " の発言を通報します。\n気になった理由を書いてください（任意）",
+      ""
+    );
+    if (reason === null) return;   // キャンセル
+    try {
+      await Sync.reportToRoom(room.code, {
+        targetId: data.reportPlayer || "",
+        messageId: Number(data.reportMessage) || null,
+        reason: reason
+      });
+      showToast("通報しました。ホストは「追い出す」で対処できます");
+    } catch (err) {
+      const msg = err && err.message ? err.message : "通報できませんでした";
+      showToast(/429|too fast/.test(msg) ? "少し待ってから通報してください" : msg);
+    }
   },
 
   send: async function (kind, body) {

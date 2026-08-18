@@ -526,6 +526,22 @@ const Sync = {
 
 
 
+  reportToRoom: async function (code, payload) {
+
+    return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/report", {
+
+      method: "POST",
+
+      headers: { "Content-Type": "application/json" },
+
+      body: JSON.stringify(payload || {})
+
+    });
+
+  },
+
+
+
   kickPlayer: async function (code, playerId) {
 
     return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/kick", {

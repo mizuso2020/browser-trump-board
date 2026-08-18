@@ -5305,3 +5305,61 @@ button.cn-cell:hover {
   border-color: var(--danger);
   color: var(--danger);
 }
+
+/* --- 霊界チャンネル・通報 ----------------------------------------------- */
+
+.chat-channel-note {
+  margin: 0;
+  padding: 0.4rem 0.55rem;
+  border-radius: var(--radius-sm);
+  background: rgba(107, 138, 253, 0.12);
+  border: 1px solid var(--border);
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+
+.chat-panel--spirit .chat-toggle {
+  border-color: var(--accent);
+}
+
+.chat-row--spirit {
+  background: rgba(107, 138, 253, 0.1);
+  border-left: 2px solid var(--accent);
+}
+
+.chat-row--spirit .chat-name {
+  color: var(--accent);
+}
+
+.chat-report {
+  flex: 0 0 auto;
+  align-self: center;
+  margin-left: auto;
+  padding: 0 0.3rem;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.85rem;
+  line-height: 1.4;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 0.12s ease;
+}
+
+.chat-row:hover .chat-report,
+.chat-report:focus-visible {
+  opacity: 1;
+}
+
+.chat-report:hover {
+  color: var(--danger);
+}
+
+/* 指で触る端末はホバーが無いので常に出す */
+@media (hover: none) {
+  .chat-report {
+    opacity: 0.55;
+  }
+}

@@ -29,9 +29,19 @@ MESSAGE_MIN_INTERVAL = 0.8   # 同じ人の連投を抑える秒数
 # --- 部屋の寿命 -----------------------------------------------------------
 # 以前は掃除処理が無く、作られた部屋がディスクに残り続けていた。
 # 募集一覧に死んだ部屋が並ぶのを防ぐためにも必要。
+REPORT_PATH = os.path.join(DATA_ROOT, "reports.jsonl")
+REPORT_MIN_INTERVAL = 10.0    # 同じ人の連続通報を抑える秒数
+REPORT_MAX_CHARS = 300
+_last_report = {}             # playerId -> 最後に通報した時刻
+
 ROOM_STALE_SECONDS = 3 * 60 * 60      # これ以上更新が無い部屋は消す
 ROOM_OPEN_STALE_SECONDS = 10 * 60     # 募集一覧に載せる上限（体感の鮮度）
 ROOM_SWEEP_INTERVAL = 10 * 60         # 掃除を走らせる間隔
+MESSAGE_CHANNELS = ("main", "spirit")
+# 生死で発言先が変わるゲーム。ポーカー系も gameState.alive を持つが、あちらは
+# 「このハンドに残っているか」の意味なので巻き込まない。
+LIVENESS_GAMES = {"werewolf"}
+
 # スタンプは種類IDだけを送らせる。任意の文字列を許すと本文の抜け道になるため、
 # サーバー側のこの一覧が正。js/room.js の ROOM_STAMPS と同じ並びにすること。
 ALLOWED_STAMPS = [
@@ -312,6 +322,45 @@ def merge_players(old_players, new_players, kicked=None):
     return ordered
 
 
+def append_report(code, reporter_id, target_id, message_id, reason):
+    """通報を1行ずつ追記する。運営が後から読んで判断するための記録。
+
+    自動でBANはしない。誤報や嫌がらせ通報で人を弾くほうが害が大きいため、
+    その場の対処はホストのキックに任せ、ここは記録に徹する。
+    """
+    now = time.time()
+    last = _last_report.get(reporter_id, 0)
+    if now - last < REPORT_MIN_INTERVAL:
+        return False, "too fast"
+    _last_report[reporter_id] = now
+
+    # 通報された発言そのものを残す。後から部屋が消えても判断できるように
+    quoted = None
+    if message_id:
+        for m in read_messages(code)["items"]:
+            if int(m.get("id", 0)) == int(message_id):
+                quoted = {"name": m.get("name"), "kind": m.get("kind"), "body": m.get("body")}
+                break
+
+    entry = {
+        "at": int(now * 1000),
+        "code": code,
+        "reporter": reporter_id,
+        "target": target_id or None,
+        "targetName": player_display_name(code, target_id) if target_id else None,
+        "messageId": message_id or None,
+        "quoted": quoted,
+        "reason": str(reason or "")[:REPORT_MAX_CHARS],
+    }
+    try:
+        os.makedirs(os.path.dirname(REPORT_PATH), exist_ok=True)
+        with open(REPORT_PATH, "a", encoding="utf-8") as fh:
+            fh.write(json.dumps(entry, ensure_ascii=False) + "\n")
+    except OSError:
+        return False, "write failed"
+    return True, None
+
+
 def room_updated_at(public):
     try:
         return float(public.get("updatedAt") or 0) / 1000.0
@@ -412,6 +461,42 @@ def read_messages(code):
     return data
 
 
+def player_liveness(code, player_id):
+    """その人が生きているか。人狼で追放・襲撃された人は "dead"。
+
+    対象外のゲームでは全員 "alive" として扱い、霊界チャンネルは使わせない。
+    """
+    public = read_json(os.path.join(room_path(code), "public.json"))
+    if not isinstance(public, dict):
+        return "alive"
+    if (public.get("game") or "") not in LIVENESS_GAMES:
+        return "alive"
+    gs = public.get("gameState")
+    if not isinstance(gs, dict) or not isinstance(gs.get("alive"), list):
+        return "alive"
+    return "alive" if player_id in gs["alive"] else "dead"
+
+
+def readable_channels(code, player_id):
+    """生きている人に霊界は見せない。死んだ人は議論を見られる（観戦のため）。"""
+    if player_liveness(code, player_id) == "dead":
+        return ("main", "spirit")
+    return ("main",)
+
+
+def writable_channel(code, player_id):
+    """死んだ人の発言は霊界へ回す。生存者の議論に割り込ませない。"""
+    return "spirit" if player_liveness(code, player_id) == "dead" else "main"
+
+
+def clean_name(raw):
+    """表示名の正規化。制御文字や長すぎる名前をそのまま通さない。"""
+    text = str(raw or "")
+    text = "".join(ch for ch in text if ch.isprintable())
+    text = re.sub(r"\s+", " ", text).strip()
+    return text[:12]
+
+
 def player_display_name(code, player_id):
     """名前は公開データ側を正とする。投稿者が名乗る名前は信用しない。"""
     public = read_json(os.path.join(room_path(code), "public.json"))
@@ -421,7 +506,7 @@ def player_display_name(code, player_id):
     return ""
 
 
-def append_message(code, player_id, kind, body):
+def append_message(code, player_id, kind, body, channel):
     data = read_messages(code)
     items = data["items"]
 
@@ -438,6 +523,7 @@ def append_message(code, player_id, kind, body):
         "name": player_display_name(code, player_id),
         "kind": kind,
         "body": body,
+        "channel": channel,
         "at": int(now * 1000),
     }
     items.append(entry)
@@ -534,15 +620,25 @@ class RoomHandler(BaseHTTPRequestHandler):
             if not CODE_RE.match(code):
                 return json_response(self, 400, {"error": "invalid code"})
             # 部屋の参加者だけが読める
-            if not is_legacy_room(code) and token_owner(code, request_token(self)) is None:
+            viewer = token_owner(code, request_token(self))
+            if viewer is None and not is_legacy_room(code):
                 return json_response(self, 403, {"error": "forbidden"})
             data = read_messages(code)
             try:
                 since = int((parsed.query.split("since=")[1].split("&")[0]) if "since=" in parsed.query else 0)
             except (ValueError, IndexError):
                 since = 0
-            items = [m for m in data["items"] if int(m.get("id", 0)) > since]
-            return json_response(self, 200, {"items": items, "nextId": data["nextId"]})
+            allowed = readable_channels(code, viewer) if viewer else ("main",)
+            items = [
+                m for m in data["items"]
+                if int(m.get("id", 0)) > since and (m.get("channel") or "main") in allowed
+            ]
+            return json_response(self, 200, {
+                "items": items,
+                "nextId": data["nextId"],
+                "channels": list(allowed),
+                "writable": writable_channel(code, viewer) if viewer else "main",
+            })
 
         if len(parts) == 2 and parts[0] == "stats" and parts[1] == "plays":
             stats = read_stats()
@@ -657,6 +753,9 @@ class RoomHandler(BaseHTTPRequestHandler):
             public = body.get("public")
             if not isinstance(public, dict):
                 return json_response(self, 400, {"error": "public required"})
+            for p in public.get("players") or []:
+                if isinstance(p, dict):
+                    p["name"] = clean_name(p.get("name")) or "プレイヤー"
             public["updatedAt"] = int(time.time() * 1000)
             write_json(os.path.join(room_path(code), "public.json"), public)
             host_id = public.get("hostId")
@@ -679,7 +778,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             if public.get("phase") != "lobby":
                 return json_response(self, 409, {"error": "started"})
             player_id = body.get("playerId", "")
-            name = (body.get("name") or "").strip()
+            # クライアント側の maxlength だけでは通り抜けるのでここで正規化する
+            name = clean_name(body.get("name"))
             if not PLAYER_RE.match(player_id) or not name:
                 return json_response(self, 400, {"error": "invalid player"})
             if player_id in (public.get("kicked") or []):
@@ -697,6 +797,27 @@ class RoomHandler(BaseHTTPRequestHandler):
             response = dict(public)
             response["_token"] = issue_token(code, player_id)
             return json_response(self, 200, response)
+
+        if len(parts) == 3 and parts[0] == "room" and parts[2] == "report":
+            code = parts[1].upper()
+            if not CODE_RE.match(code):
+                return json_response(self, 400, {"error": "invalid code"})
+            reporter = token_owner(code, request_token(self))
+            if reporter is None:
+                return json_response(self, 403, {"error": "forbidden"})
+
+            target = body.get("targetId") or ""
+            if target and not PLAYER_RE.match(str(target)):
+                return json_response(self, 400, {"error": "invalid player"})
+            message_id = body.get("messageId")
+            reason = body.get("reason")
+            if not target and not message_id:
+                return json_response(self, 400, {"error": "nothing to report"})
+
+            ok, err = append_report(code, reporter, target, message_id, reason)
+            if not ok:
+                return json_response(self, 429 if err == "too fast" else 500, {"error": err})
+            return json_response(self, 200, {"ok": True})
 
         if len(parts) == 3 and parts[0] == "room" and parts[2] == "kick":
             code = parts[1].upper()
@@ -775,7 +896,10 @@ class RoomHandler(BaseHTTPRequestHandler):
             else:
                 return json_response(self, 400, {"error": "invalid kind"})
 
-            entry, err = append_message(code, player_id, kind, content)
+            # 発言先はサーバーが決める。死んだ人が議論に割り込めないよう、
+            # クライアントの指定は受け付けない
+            channel = writable_channel(code, player_id)
+            entry, err = append_message(code, player_id, kind, content, channel)
             if err:
                 return json_response(self, 429, {"error": err})
             return json_response(self, 200, entry)
