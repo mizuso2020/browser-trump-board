@@ -15,7 +15,7 @@ const GAME_CATEGORIES = {
     name: "トランプ",
     description: "トランプ・ポーカーなどカードで遊ぶ",
     icon: "🃏",
-    iconImage: "images/games/playing-cards-icon.png"
+    iconImage: "images/games/playing-cards-icon.jpg"
   },
   board: {
     id: "board",
@@ -52,7 +52,7 @@ const GAME_REGISTRY = {
   werewolf: {
     id: "werewolf",
     name: "人狼",
-    iconImage: "images/games/werewolf-icon.png",
+    iconImage: "images/games/werewolf-icon.jpg",
     category: "party",
     description: "正体を隠し、仲間を信じ、相手を見抜く定番の正体隠匿ゲーム",
     minPlayers: 3,
@@ -66,7 +66,7 @@ const GAME_REGISTRY = {
   drawing_werewolf: {
     id: "drawing_werewolf",
     name: "お絵描き人狼",
-    iconImage: "images/games/werewolf-icon.png",
+    iconImage: "images/games/werewolf-icon.jpg",
     category: "party",
     description: "市民だけお題を持ち、1枚の絵に順番に加筆。お題がない人狼を見つける心理戦",
     minPlayers: 4,
@@ -132,7 +132,7 @@ const GAME_REGISTRY = {
   wordwolf: {
     id: "wordwolf",
     name: "ワードウルフ",
-    iconImage: "images/games/wordwolf-icon.png",
+    iconImage: "images/games/wordwolf-icon.jpg",
     category: "party",
     description: "お題について話し合い、違うお題を持つワードウルフを見つける心理戦。各自のスマホで4〜12人",
     minPlayers: 4,
@@ -330,7 +330,7 @@ const GAME_REGISTRY = {
   reversi: {
     id: "reversi",
     name: "オセロ",
-    iconImage: "images/games/reversi-icon.png",
+    iconImage: "images/games/reversi-icon.jpg",
     category: "duel",
     description: "石を裏返しながら陣地を広げる2人対戦。1台または各自のスマホで対戦",
     minPlayers: 2,
@@ -342,7 +342,7 @@ const GAME_REGISTRY = {
   gomoku: {
     id: "gomoku",
     name: "五目並べ",
-    iconImage: "images/games/gomoku-icon.png",
+    iconImage: "images/games/gomoku-icon.jpg",
     category: "duel",
     description: "黒白の石を交互に置き、5つ並べたら勝ち。1台または各自のスマホで2人対戦",
     minPlayers: 2,
@@ -354,7 +354,7 @@ const GAME_REGISTRY = {
   shogi: {
     id: "shogi",
     name: "将棋",
-    iconImage: "images/games/shogi-icon.png",
+    iconImage: "images/games/shogi-icon.jpg",
     category: "duel",
     description: "駒を動かして相手の玉を詰ます。1台または各自のスマホで2人対戦",
     minPlayers: 2,
@@ -366,7 +366,7 @@ const GAME_REGISTRY = {
   vanishing_ttt: {
     id: "vanishing_ttt",
     name: "消える○×",
-    iconImage: "images/games/marubatu-icon.png",
+    iconImage: "images/games/marubatu-icon.jpg",
     category: "duel",
     description: "3×3で〇×を並べるが、4個目を置くと最古の駒が消える三目並べ",
     minPlayers: 2,
@@ -379,7 +379,7 @@ const GAME_REGISTRY = {
   tic_tac_toe: {
     id: "tic_tac_toe",
     name: "ノーマル○×ゲーム",
-    iconImage: "images/games/marubatu-icon.png",
+    iconImage: "images/games/marubatu-icon.jpg",
     category: "duel",
     description: "3×3の定番○×。横・縦・斜めに3つ並べた方の勝ち",
     minPlayers: 2,
@@ -392,7 +392,7 @@ const GAME_REGISTRY = {
   matryoshka_ttt: {
     id: "matryoshka_ttt",
     name: "マトリョーシカ○×",
-    iconImage: "images/games/marubatu-icon.png",
+    iconImage: "images/games/marubatu-icon.jpg",
     category: "duel",
     description: "小・中・大のコマを重ねて三目を狙う。1台または各自のスマホで2人対戦",
     minPlayers: 2,

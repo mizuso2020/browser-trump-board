@@ -128,17 +128,17 @@ const PlayingCards = {
 
     if (rank >= 1 && rank <= 10) {
 
-      if (rank === 1) return suit + "_01.png";
+      if (rank === 1) return suit + "_01.jpg";
 
-      return suit + "_" + String(rank).padStart(2, "0") + ".png";
+      return suit + "_" + String(rank).padStart(2, "0") + ".jpg";
 
     }
 
-    if (rank === 11) return suit + "_jack.png";
+    if (rank === 11) return suit + "_jack.jpg";
 
-    if (rank === 12) return suit + "_queen.png";
+    if (rank === 12) return suit + "_queen.jpg";
 
-    if (rank === 13) return suit + "_king.png";
+    if (rank === 13) return suit + "_king.jpg";
 
     return null;
 
@@ -162,7 +162,7 @@ const PlayingCards = {
 
       const color = (card.jokerColor === "red" || options.joker === "red") ? "red" : "black";
 
-      const joker = color === "red" ? "joker_red.png" : "joker_black.png";
+      const joker = color === "red" ? "joker_red.jpg" : "joker_black.jpg";
 
       return this.IMAGE_BASE + joker + "?v=" + this.VERSION;
 

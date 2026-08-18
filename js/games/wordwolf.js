@@ -671,7 +671,7 @@ const WordWolfGame = {
 
   renderWinCard: function (winner) {
     const isCitizens = winner === "citizens" || winner === "citizens_pending";
-    const file = isCitizens ? "villager.card.png" : "werewolf.card.png";
+    const file = isCitizens ? "villager.card.jpg" : "werewolf.card.jpg";
     const alt = isCitizens ? "市民の勝利" : "ワードウルフの勝利";
     const src = this.WIN_CARD_BASE + file + "?v=" + this.WIN_CARD_VERSION;
     return (

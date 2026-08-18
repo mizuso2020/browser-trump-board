@@ -54,7 +54,7 @@ const WerewolfGame = {
   PLAYABLE_ROLE_IDS: ["villager", "seer", "medium", "hunter", "shared", "wolf", "madman", "fanatic", "fox"],
 
   ROLE_CARD_IMAGE_BASE: "images/roles/",
-  ROLE_CARD_BACK_IMAGE: "images/roles/card-back.png",
+  ROLE_CARD_BACK_IMAGE: "images/roles/card-back.jpg",
   ROLE_CARD_IMAGE_VERSION: "20260715",
 
   ROLE_CARD_META: {
@@ -1059,7 +1059,7 @@ const WerewolfGame = {
   getRoleCardImageSrc: function (role) {
     const v = this.ROLE_CARD_IMAGE_VERSION;
     if (!role) return this.ROLE_CARD_BACK_IMAGE + "?v=" + v;
-    return this.ROLE_CARD_IMAGE_BASE + role + ".png?v=" + v;
+    return this.ROLE_CARD_IMAGE_BASE + role + ".jpg?v=" + v;
   },
 
   renderRoleCatalogCard: function (role, options) {
