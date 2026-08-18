@@ -37,10 +37,13 @@ _last_report = {}             # playerId -> 最後に通報した時刻
 ROOM_STALE_SECONDS = 3 * 60 * 60      # これ以上更新が無い部屋は消す
 ROOM_OPEN_STALE_SECONDS = 10 * 60     # 募集一覧に載せる上限（体感の鮮度）
 ROOM_SWEEP_INTERVAL = 10 * 60         # 掃除を走らせる間隔
-MESSAGE_CHANNELS = ("main", "spirit")
+MESSAGE_CHANNELS = ("main", "spirit", "wolf")
 # 生死で発言先が変わるゲーム。ポーカー系も gameState.alive を持つが、あちらは
 # 「このハンドに残っているか」の意味なので巻き込まない。
 LIVENESS_GAMES = {"werewolf"}
+# 人狼だけの相談を許すフェーズ。昼に私語させると、嘘の口裏合わせが
+# 他の人に見えないまま進んでしまいゲームが壊れる。
+WOLF_TALK_PHASES = {"wolf_night"}
 
 # スタンプは種類IDだけを送らせる。任意の文字列を許すと本文の抜け道になるため、
 # サーバー側のこの一覧が正。js/room.js の ROOM_STAMPS と同じ並びにすること。
@@ -477,16 +480,48 @@ def player_liveness(code, player_id):
     return "alive" if player_id in gs["alive"] else "dead"
 
 
+def player_role(code, player_id):
+    """役職を引く。チャンネルの出し分けにだけ使い、外へは返さない。"""
+    public = read_json(os.path.join(room_path(code), "public.json"))
+    if not isinstance(public, dict) or (public.get("game") or "") not in LIVENESS_GAMES:
+        return None
+    secrets = read_json(os.path.join(room_path(code), "hostSecrets.json"))
+    roles = (secrets or {}).get("roles")
+    if not isinstance(roles, dict):
+        return None
+    return roles.get(player_id)
+
+
+def is_wolf_talk_time(code):
+    public = read_json(os.path.join(room_path(code), "public.json"))
+    return isinstance(public, dict) and (public.get("phase") or "") in WOLF_TALK_PHASES
+
+
 def readable_channels(code, player_id):
-    """生きている人に霊界は見せない。死んだ人は議論を見られる（観戦のため）。"""
+    """生きている人に霊界は見せない。死んだ人は議論を見られる（観戦のため）。
+
+    人狼の相談ログは、生きている人狼なら昼でも読み返せる。害があるのは
+    昼に「書ける」ことなので、読む側は絞らない。狂人は人狼ではないので見えない。
+    """
     if player_liveness(code, player_id) == "dead":
         return ("main", "spirit")
+    if player_role(code, player_id) == "wolf":
+        return ("main", "wolf")
     return ("main",)
 
 
-def writable_channel(code, player_id):
-    """死んだ人の発言は霊界へ回す。生存者の議論に割り込ませない。"""
-    return "spirit" if player_liveness(code, player_id) == "dead" else "main"
+def writable_channels(code, player_id):
+    """書ける先の一覧。先頭が既定。
+
+    死んだ人は霊界だけ（生存者の議論に割り込ませない）。生きている人狼は
+    夜だけ相談できる。夜は既定を相談側にする — 作戦を誤って全体に
+    書いてしまう事故のほうが取り返しがつかないため。
+    """
+    if player_liveness(code, player_id) == "dead":
+        return ("spirit",)
+    if player_role(code, player_id) == "wolf" and is_wolf_talk_time(code):
+        return ("wolf", "main")
+    return ("main",)
 
 
 def clean_name(raw):
@@ -637,7 +672,7 @@ class RoomHandler(BaseHTTPRequestHandler):
                 "items": items,
                 "nextId": data["nextId"],
                 "channels": list(allowed),
-                "writable": writable_channel(code, viewer) if viewer else "main",
+                "writable": list(writable_channels(code, viewer)) if viewer else ["main"],
             })
 
         if len(parts) == 2 and parts[0] == "stats" and parts[1] == "plays":
@@ -896,9 +931,11 @@ class RoomHandler(BaseHTTPRequestHandler):
             else:
                 return json_response(self, 400, {"error": "invalid kind"})
 
-            # 発言先はサーバーが決める。死んだ人が議論に割り込めないよう、
-            # クライアントの指定は受け付けない
-            channel = writable_channel(code, player_id)
+            # 書ける先はサーバーが決める。クライアントは希望を出せるだけで、
+            # 一覧に無い先は既定へ落とす（死んだ人が議論に割り込む道を残さない）
+            allowed_write = writable_channels(code, player_id)
+            requested = body.get("channel")
+            channel = requested if requested in allowed_write else allowed_write[0]
             entry, err = append_message(code, player_id, kind, content, channel)
             if err:
                 return json_response(self, 429, {"error": err})

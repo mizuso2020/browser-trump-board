@@ -3883,8 +3883,9 @@ const Chat = {
   open: false,
   timer: null,
   sending: false,
-  writable: "main",   // サーバーが決める。死ぬと "spirit" になる
-  channels: ["main"],
+  writable: ["main"],   // 書ける先の一覧。サーバーが決める
+  channels: ["main"],   // 読める先の一覧
+  current: "main",      // いま選んでいる送信先
 
   el: function (id) { return document.getElementById(id); },
 
@@ -3919,6 +3920,13 @@ const Chat = {
       if (btn) self.report(btn.dataset);
     });
 
+    this.el("chatChannelTabs").addEventListener("click", function (e) {
+      const btn = e.target.closest("[data-channel]");
+      if (!btn) return;
+      self.current = btn.dataset.channel;
+      self.applyChannelState();
+    });
+
     this.applyChannelState();
 
     this.poll();
@@ -3940,29 +3948,65 @@ const Chat = {
     if (!room || !room.code) return;
     const data = await Sync.fetchMessages(room.code, this.lastId);
     if (!data) return;
-    if (data.writable && data.writable !== this.writable) {
-      this.writable = data.writable;
+    const w = Array.isArray(data.writable) ? data.writable : ["main"];
+    if (w.join(",") !== this.writable.join(",")) {
+      this.writable = w;
       this.channels = data.channels || ["main"];
+      // 状況が変わったら既定（サーバーが先頭に置いた先）に戻す。夜になった
+      // 人狼は相談側が既定。作戦を誤って全体に書く事故は取り返しがつかない。
+      // 自分でタブを選び直した場合は、次に状況が変わるまでその選択が残る。
+      this.current = this.writable[0];
       this.applyChannelState();
     }
     if (Array.isArray(data.items) && data.items.length) this.append(data.items);
   },
 
-  /** 霊界に落ちたら、その場で入力欄の見え方を変える。
-   *  発言先の判定はサーバー側が持っているので、ここは表示だけ。 */
+  CHANNEL_LABELS: {
+    main: "議論",
+    spirit: "👻 霊界",
+    wolf: "🐺 人狼の相談"
+  },
+
+  CHANNEL_NOTES: {
+    spirit: "👻 霊界　あなたの発言は、亡くなった人にだけ見えます",
+    wolf: "🐺 人狼の相談　あなたの発言は、生きている人狼にだけ見えます"
+  },
+
+  /** 送信先が変わったら見え方を変える。判定はサーバー側が持っているので表示だけ。 */
   applyChannelState: function () {
-    const spirit = this.writable === "spirit";
     const note = this.el("chatChannelNote");
     const input = this.el("chatInput");
-    this.el("chatPanel").classList.toggle("chat-panel--spirit", spirit);
+    const tabs = this.el("chatChannelTabs");
+    const secret = this.current !== "main";
+
+    this.el("chatPanel").classList.toggle("chat-panel--secret", secret);
+    this.el("chatPanel").classList.toggle("chat-panel--spirit", this.current === "spirit");
+    this.el("chatPanel").classList.toggle("chat-panel--wolf", this.current === "wolf");
+
+    // 送信先が2つ以上あるときだけ選択させる（夜の人狼など）
+    if (tabs) {
+      if (this.writable.length > 1) {
+        const self = this;
+        tabs.innerHTML = this.writable.map(function (ch) {
+          return '<button type="button" class="chat-tab' + (ch === self.current ? " is-active" : "") +
+            '" data-channel="' + ch + '">' + (self.CHANNEL_LABELS[ch] || ch) + "</button>";
+        }).join("");
+        tabs.classList.remove("hidden");
+      } else {
+        tabs.innerHTML = "";
+        tabs.classList.add("hidden");
+      }
+    }
+
     if (note) {
-      note.textContent = spirit
-        ? "👻 霊界　あなたの発言は、亡くなった人にだけ見えます"
-        : "";
-      note.classList.toggle("hidden", !spirit);
+      const text = this.CHANNEL_NOTES[this.current] || "";
+      note.textContent = text;
+      note.classList.toggle("hidden", !text);
     }
     if (input) {
-      input.placeholder = spirit ? "霊界にメッセージを送る" : "メッセージを入力";
+      input.placeholder = secret
+        ? (this.CHANNEL_LABELS[this.current] || "") + "にメッセージを送る"
+        : "メッセージを入力";
     }
   },
 
@@ -3974,14 +4018,15 @@ const Chat = {
       self.lastId = m.id;
       const me = getMe();
       const mine = !!(me && me.id === m.playerId);
-      const isSpirit = (m.channel || "main") === "spirit";
+      const ch = m.channel || "main";
+      const mark = ch === "spirit" ? "👻 " : ch === "wolf" ? "🐺 " : "";
       const row = document.createElement("div");
       row.className = "chat-row" +
         (mine ? " chat-row--mine" : "") +
         (m.kind === "stamp" ? " chat-row--stamp" : "") +
-        (isSpirit ? " chat-row--spirit" : "");
+        (ch !== "main" ? " chat-row--" + ch : "");
       row.innerHTML =
-        '<span class="chat-name">' + (isSpirit ? "👻 " : "") + escapeHtml(m.name || "?") + "</span>" +
+        '<span class="chat-name">' + mark + escapeHtml(m.name || "?") + "</span>" +
         '<span class="chat-text">' + escapeHtml(m.body || "") + "</span>" +
         (mine ? "" :
           '<button type="button" class="chat-report" title="通報する"' +
@@ -4030,7 +4075,7 @@ const Chat = {
     if (this.sending || !room || !room.code) return;
     this.sending = true;
     try {
-      await Sync.sendMessage(room.code, kind, body);
+      await Sync.sendMessage(room.code, kind, body, this.current);
       await this.poll();
     } catch (e) {
       showToast(e && e.message ? e.message : "送信できませんでした");

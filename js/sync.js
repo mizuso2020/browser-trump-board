@@ -578,7 +578,7 @@ const Sync = {
 
 
 
-  sendMessage: async function (code, kind, body) {
+  sendMessage: async function (code, kind, body, channel) {
 
     return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/messages", {
 
@@ -586,7 +586,7 @@ const Sync = {
 
       headers: { "Content-Type": "application/json" },
 
-      body: JSON.stringify({ kind: kind, body: body })
+      body: JSON.stringify({ kind: kind, body: body, channel: channel || undefined })
 
     });
 

@@ -5363,3 +5363,49 @@ button.cn-cell:hover {
     opacity: 0.55;
   }
 }
+
+/* --- 人狼の相談チャンネル ----------------------------------------------- */
+
+.chat-channel-tabs {
+  display: flex;
+  gap: 0.3rem;
+}
+
+.chat-tab {
+  flex: 1 1 auto;
+  padding: 0.35rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  color: var(--text-dim);
+  font-size: 0.82rem;
+  cursor: pointer;
+}
+
+.chat-tab:hover {
+  background: var(--surface-hover);
+}
+
+.chat-tab.is-active {
+  border-color: var(--accent);
+  background: var(--surface-hover);
+  color: var(--text);
+  font-weight: 700;
+}
+
+.chat-panel--wolf .chat-toggle {
+  border-color: var(--danger);
+}
+
+.chat-panel--wolf .chat-channel-note {
+  background: rgba(248, 113, 113, 0.12);
+}
+
+.chat-row--wolf {
+  background: rgba(248, 113, 113, 0.1);
+  border-left: 2px solid var(--danger);
+}
+
+.chat-row--wolf .chat-name {
+  color: var(--danger);
+}
