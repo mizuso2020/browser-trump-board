@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Party Games room sync API (stdlib only)."""
 
+import hashlib
 import json
 import os
 import re
@@ -569,16 +570,49 @@ def append_message(code, player_id, kind, body, channel):
     return entry, None
 
 
-def json_response(handler, status, payload):
+def public_etag(code):
+    """public.json の中身から作る変化検出用の印。
+
+    ポーリングは400ms間隔で回るのに、部屋の中身は操作したときしか変わらない。
+    お絵描き人狼では絵(最大138KB)が public.json に入るため、そのままだと
+    1人あたり毎分20MBを再ダウンロードすることになる。
+    """
+    try:
+        with open(os.path.join(room_path(code), "public.json"), "rb") as fh:
+            return '"' + hashlib.sha1(fh.read()).hexdigest() + '"'
+    except OSError:
+        return None
+
+
+def cors_headers(handler):
+    handler.send_header("Access-Control-Allow-Origin", "*")
+    handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
+    handler.send_header("Access-Control-Allow-Headers", "Content-Type, X-Room-Token, If-None-Match")
+    # 別オリジンから ETag を読むには明示的な許可が要る
+    handler.send_header("Access-Control-Expose-Headers", "ETag")
+
+
+def not_modified(handler, etag):
+    handler.send_response(304)
+    handler.send_header("ETag", etag)
+    handler.send_header("Cache-Control", "no-cache")
+    cors_headers(handler)
+    handler.end_headers()
+
+
+def json_response(handler, status, payload, etag=None):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
     handler.send_header("Content-Type", "application/json; charset=utf-8")
     handler.send_header("Content-Length", str(len(body)))
-    handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
-    handler.send_header("Pragma", "no-cache")
-    handler.send_header("Access-Control-Allow-Origin", "*")
-    handler.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-    handler.send_header("Access-Control-Allow-Headers", "Content-Type, X-Room-Token")
+    if etag:
+        handler.send_header("ETag", etag)
+        # no-store だと条件付きリクエストの土台が消えるので no-cache にする
+        handler.send_header("Cache-Control", "no-cache")
+    else:
+        handler.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        handler.send_header("Pragma", "no-cache")
+    cors_headers(handler)
     handler.end_headers()
     handler.wfile.write(body)
 
@@ -604,9 +638,7 @@ class RoomHandler(BaseHTTPRequestHandler):
 
     def do_OPTIONS(self):
         self.send_response(204)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, PUT, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type, X-Room-Token")
+        cors_headers(self)
         self.end_headers()
 
     def do_GET(self):
@@ -618,10 +650,13 @@ class RoomHandler(BaseHTTPRequestHandler):
             code = parts[1].upper()
             if not CODE_RE.match(code):
                 return json_response(self, 400, {"error": "invalid code"})
+            etag = public_etag(code)
+            if etag and self.headers.get("If-None-Match") == etag:
+                return not_modified(self, etag)
             data = read_json(os.path.join(room_path(code), "public.json"))
             if not data:
                 return json_response(self, 404, {"error": "not found"})
-            return json_response(self, 200, data)
+            return json_response(self, 200, data, etag=etag)
 
         if len(parts) == 4 and parts[0] == "room" and parts[2] == "private":
             code = parts[1].upper()

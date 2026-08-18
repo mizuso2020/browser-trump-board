@@ -382,9 +382,104 @@ const Sync = {
 
 
 
+  /* ルーム取得は400ms間隔で回る一番重い経路。中身は操作したときしか
+     変わらないので、ETag で変化が無いことを確かめて本文の再取得を省く。
+     お絵描き人狼は絵(最大138KB)が public に入るため効果が大きい。
+
+     apiFetch は使わない。あちらは毎回キャッシュバスターを付けるため
+     条件付きリクエストが成立しない。 */
+
+  _roomEtag: {},
+
+  _roomCache: {},
+
+
+
   loadServer: async function (code) {
 
-    return this.apiFetch("/room/" + String(code || "").toUpperCase());
+    const roomId = String(code || "").toUpperCase();
+
+    const opts = {
+
+      cache: "no-cache",
+
+      headers: {}
+
+    };
+
+    const token = this.getRoomToken(roomId);
+
+    if (token) opts.headers["X-Room-Token"] = token;
+
+    const known = this._roomEtag[roomId];
+
+    if (known && this._roomCache[roomId]) opts.headers["If-None-Match"] = known;
+
+
+
+    const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+
+    if (controller) {
+
+      opts.signal = controller.signal;
+
+      setTimeout(function () { controller.abort(); }, 12000);
+
+    }
+
+
+
+    const res = await fetch(this.apiBase() + "/room/" + roomId, opts);
+
+
+
+    if (res.status === 304 && this._roomCache[roomId]) {
+
+      // 中身は変わっていない。前回の内容をそのまま使う
+
+      return JSON.parse(this._roomCache[roomId]);
+
+    }
+
+
+
+    let text = "";
+
+    try { text = await res.text(); } catch (e) { text = ""; }
+
+
+
+    if (!res.ok) {
+
+      let data = {};
+
+      try { data = JSON.parse(text); } catch (e) { data = {}; }
+
+      const msg = data.error || "通信に失敗しました";
+
+      if (res.status === 404 && msg === "not found") {
+
+        throw new Error("ルームが見つかりません");
+
+      }
+
+      throw new Error(msg);
+
+    }
+
+
+
+    const etag = res.headers.get("ETag");
+
+    if (etag) {
+
+      this._roomEtag[roomId] = etag;
+
+      this._roomCache[roomId] = text;
+
+    }
+
+    return JSON.parse(text);
 
   },
 
@@ -614,7 +709,7 @@ const Sync = {
 
       try {
 
-        const latest = await Sync.apiFetch("/room/" + roomId);
+        const latest = await Sync.loadServer(roomId);
         const snap = pollSnapshot(latest);
         if (snap && snap === lastPollSnapshot) return;
         lastPollSnapshot = snap;
