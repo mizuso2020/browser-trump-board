@@ -5033,3 +5033,137 @@ button.cn-cell:hover {
 .ito-play-card-label {
   font-weight: 700;
 }
+
+/* --- 掲示板 ------------------------------------------------------------- */
+
+.chat-panel {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  z-index: 60;
+  width: min(360px, 100vw);
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  font-size: 0.92rem;
+}
+
+.chat-toggle {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+  padding: 0.6rem 0.9rem;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  background: var(--surface);
+  color: var(--text);
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.chat-toggle:hover {
+  background: var(--surface-hover);
+}
+
+.chat-badge {
+  min-width: 1.5rem;
+  padding: 0.1rem 0.4rem;
+  border-radius: 999px;
+  background: var(--danger);
+  color: #fff;
+  font-size: 0.78rem;
+  text-align: center;
+}
+
+.chat-body {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 0.65rem;
+  border: 1px solid var(--border);
+  border-bottom: none;
+  background: var(--surface);
+  box-shadow: var(--shadow);
+}
+
+.chat-log {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  height: 40vh;
+  max-height: 320px;
+  overflow-y: auto;
+  padding-right: 0.2rem;
+}
+
+.chat-row {
+  display: flex;
+  gap: 0.45rem;
+  align-items: baseline;
+  padding: 0.3rem 0.5rem;
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  word-break: break-word;
+}
+
+.chat-row--mine {
+  background: var(--surface-hover);
+}
+
+.chat-row--stamp .chat-text {
+  font-size: 1.5rem;
+  line-height: 1.2;
+}
+
+.chat-name {
+  flex: 0 0 auto;
+  max-width: 6.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+}
+
+.chat-text {
+  flex: 1 1 auto;
+}
+
+.chat-stamps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+
+.chat-stamp {
+  padding: 0.25rem 0.4rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  font-size: 1.1rem;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.chat-stamp:hover {
+  background: var(--surface-hover);
+}
+
+.chat-form {
+  display: flex;
+  gap: 0.4rem;
+}
+
+.chat-form input {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+@media (max-width: 480px) {
+  .chat-log {
+    height: 32vh;
+  }
+}

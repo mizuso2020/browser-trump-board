@@ -19,6 +19,18 @@ STATS_BOOT_WEB_PATH = os.environ.get(
 )
 CODE_RE = re.compile(r"^[A-Z0-9]{4}$")
 PLAYER_RE = re.compile(r"^[a-z0-9]{6,16}$")
+
+# --- 掲示板 ---------------------------------------------------------------
+MESSAGE_MAX_CHARS = 200      # 1件の本文の上限
+MESSAGE_KEEP = 200           # 1部屋で保持する件数。超えたら古い順に捨てる
+MESSAGE_MIN_INTERVAL = 0.8   # 同じ人の連投を抑える秒数
+# スタンプは種類IDだけを送らせる。任意の文字列を許すと本文の抜け道になるため、
+# サーバー側のこの一覧が正。js/room.js の ROOM_STAMPS と同じ並びにすること。
+ALLOWED_STAMPS = [
+    "👍", "👎", "😀", "😂", "😮", "😭", "😡", "🤔",
+    "🎉", "👏", "🙏", "💡", "❓", "❗", "🔥", "💯",
+    "⏰", "🆗", "🈵", "🐺",
+]
 GAME_MAX_PLAYERS = {
     "werewolf": 13,
     "wordwolf": 12,
@@ -267,6 +279,55 @@ def merge_players(old_players, new_players):
     return ordered
 
 
+def messages_path(code):
+    return os.path.join(room_path(code), "messages.json")
+
+
+def read_messages(code):
+    data = read_json(messages_path(code))
+    if not isinstance(data, dict) or not isinstance(data.get("items"), list):
+        return {"nextId": 1, "items": []}
+    if not isinstance(data.get("nextId"), int):
+        data["nextId"] = len(data["items"]) + 1
+    return data
+
+
+def player_display_name(code, player_id):
+    """名前は公開データ側を正とする。投稿者が名乗る名前は信用しない。"""
+    public = read_json(os.path.join(room_path(code), "public.json"))
+    for p in (public or {}).get("players") or []:
+        if isinstance(p, dict) and p.get("id") == player_id:
+            return str(p.get("name") or "")[:12]
+    return ""
+
+
+def append_message(code, player_id, kind, body):
+    data = read_messages(code)
+    items = data["items"]
+
+    now = time.time()
+    for item in reversed(items):
+        if item.get("playerId") == player_id:
+            if now - float(item.get("at", 0)) / 1000.0 < MESSAGE_MIN_INTERVAL:
+                return None, "too fast"
+            break
+
+    entry = {
+        "id": data["nextId"],
+        "playerId": player_id,
+        "name": player_display_name(code, player_id),
+        "kind": kind,
+        "body": body,
+        "at": int(now * 1000),
+    }
+    items.append(entry)
+    data["nextId"] += 1
+    if len(items) > MESSAGE_KEEP:
+        data["items"] = items[-MESSAGE_KEEP:]
+    write_json(messages_path(code), data)
+    return entry, None
+
+
 def json_response(handler, status, payload):
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     handler.send_response(status)
@@ -343,6 +404,21 @@ class RoomHandler(BaseHTTPRequestHandler):
             if not data:
                 return json_response(self, 404, {"error": "not found"})
             return json_response(self, 200, data)
+
+        if len(parts) == 3 and parts[0] == "room" and parts[2] == "messages":
+            code = parts[1].upper()
+            if not CODE_RE.match(code):
+                return json_response(self, 400, {"error": "invalid code"})
+            # 部屋の参加者だけが読める
+            if not is_legacy_room(code) and token_owner(code, request_token(self)) is None:
+                return json_response(self, 403, {"error": "forbidden"})
+            data = read_messages(code)
+            try:
+                since = int((parsed.query.split("since=")[1].split("&")[0]) if "since=" in parsed.query else 0)
+            except (ValueError, IndexError):
+                since = 0
+            items = [m for m in data["items"] if int(m.get("id", 0)) > since]
+            return json_response(self, 200, {"items": items, "nextId": data["nextId"]})
 
         if len(parts) == 2 and parts[0] == "stats" and parts[1] == "plays":
             stats = read_stats()
@@ -510,6 +586,33 @@ class RoomHandler(BaseHTTPRequestHandler):
                 if matches:
                     return json_response(self, 200, {"playerId": matches[0]["id"]})
             return json_response(self, 404, {"error": "not in room"})
+
+        if len(parts) == 3 and parts[0] == "room" and parts[2] == "messages":
+            code = parts[1].upper()
+            if not CODE_RE.match(code):
+                return json_response(self, 400, {"error": "invalid code"})
+            player_id = token_owner(code, request_token(self))
+            if player_id is None:
+                return json_response(self, 403, {"error": "forbidden"})
+
+            kind = body.get("kind")
+            if kind == "stamp":
+                stamp = body.get("body")
+                if stamp not in ALLOWED_STAMPS:
+                    return json_response(self, 400, {"error": "unknown stamp"})
+                content = stamp
+            elif kind == "text":
+                content = str(body.get("body") or "").strip()
+                if not content:
+                    return json_response(self, 400, {"error": "empty"})
+                content = content[:MESSAGE_MAX_CHARS]
+            else:
+                return json_response(self, 400, {"error": "invalid kind"})
+
+            entry, err = append_message(code, player_id, kind, content)
+            if err:
+                return json_response(self, 429, {"error": err})
+            return json_response(self, 200, entry)
 
         if len(parts) == 2 and parts[0] == "stats" and parts[1] == "plays":
             count = increment_play_count()

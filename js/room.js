@@ -331,6 +331,7 @@ async function boot() {
     await tryAutoStartPreferredGame();
     markRoomSyncedSnapshot(room);
     render();
+    Chat.init();
   } catch (err) {
     showFatal(err.message || "接続に失敗しました");
   }
@@ -1037,10 +1038,7 @@ async function tryAutoStartPreferredGame() {
     return;
   }
 
-  if ((gameId === "daifugo" || gameId === "texas_holdem" || gameId === "ninetyNine" || gameId === "skull" || gameId === "blackjack" || gameId === "ito" || gameId === "shogi") && room.mode !== "room") {
-    showToast(meta.name + " は各自のスマホモードのみ対応です");
-    return;
-  }
+  if (rejectUnsupportedMode(meta, room.mode)) return;
 
   roomActionLock = true;
   try {
@@ -1119,6 +1117,20 @@ function renderLobbyQr(room) {
 function isModeAvailableForGame(meta, roomMode) {
   if (!meta || !meta.modesSoon) return true;
   return meta.modesSoon.indexOf(roomMode) === -1;
+}
+
+function modeLabel(roomMode) {
+  if (roomMode === "local") return "1台で遊ぶ";
+  if (roomMode === "online") return "オンライン";
+  return "各自のスマホ";
+}
+
+/** 対応モードの判定は game-registry.js の modesSoon が唯一の情報源。
+ *  ここでゲームIDを列挙すると二重管理になり、実際に食い違いが起きた。 */
+function rejectUnsupportedMode(meta, roomMode) {
+  if (isModeAvailableForGame(meta, roomMode)) return false;
+  showToast(meta.name + " は「" + modeLabel(roomMode) + "」に対応していません");
+  return true;
 }
 
 var FINISHED_GAME_PHASES = {
@@ -1687,40 +1699,7 @@ async function handleAction(action, data, ctx) {
           return;
         }
 
-        if (data.game === "daifugo" && room.mode !== "room") {
-          showToast("大富豪は各自のスマホモードのみ対応です");
-          return;
-        }
-
-        if (data.game === "texas_holdem" && room.mode !== "room") {
-          showToast("テキサスホールデムは各自のスマホモードのみ対応です");
-          return;
-        }
-
-        if (data.game === "ninetyNine" && room.mode !== "room") {
-          showToast("99は各自のスマホモードのみ対応です");
-          return;
-        }
-
-        if (data.game === "skull" && room.mode !== "room") {
-          showToast("爆弾は各自のスマホモードのみ対応です");
-          return;
-        }
-
-        if (data.game === "blackjack" && room.mode !== "room") {
-          showToast("ブラックジャックは各自のスマホモードのみ対応です");
-          return;
-        }
-
-        if (data.game === "ito" && room.mode !== "room") {
-          showToast("ナンバーリンクは各自のスマホモードのみ対応です");
-          return;
-        }
-
-        if (data.game === "shogi" && room.mode !== "room") {
-          showToast("将棋は各自のスマホモードのみ対応です");
-          return;
-        }
+        if (rejectUnsupportedMode(startMeta, room.mode)) return;
 
         room.game = data.game;
 
@@ -3865,7 +3844,119 @@ window.__daifugoRunAutoPass = async function (expectedKey) {
   }
 };
 
+/* --- 掲示板 ---------------------------------------------------------------
+   1台モードでは使わない（全員が同じ画面を見ているため）。
+   #app とは別の要素を直接操作する。render() で作り直すと入力中の文字が消える。
+   スタンプの並びは api/room_server.py の ALLOWED_STAMPS と揃えること。 */
+
+const ROOM_STAMPS = [
+  "👍", "👎", "😀", "😂", "😮", "😭", "😡", "🤔",
+  "🎉", "👏", "🙏", "💡", "❓", "❗", "🔥", "💯",
+  "⏰", "🆗", "🈵", "🐺"
+];
+
+const Chat = {
+  lastId: 0,
+  unread: 0,
+  open: false,
+  timer: null,
+  sending: false,
+
+  el: function (id) { return document.getElementById(id); },
+
+  init: function () {
+    const panel = this.el("chatPanel");
+    if (!panel || mode === "local") return;
+    panel.classList.remove("hidden");
+
+    this.el("chatStamps").innerHTML = ROOM_STAMPS.map(function (s) {
+      return '<button type="button" class="chat-stamp" data-stamp="' + s + '">' + s + "</button>";
+    }).join("");
+
+    const self = this;
+    this.el("chatToggle").addEventListener("click", function () { self.toggle(); });
+
+    this.el("chatStamps").addEventListener("click", function (e) {
+      const btn = e.target.closest("[data-stamp]");
+      if (btn) self.send("stamp", btn.dataset.stamp);
+    });
+
+    this.el("chatForm").addEventListener("submit", function (e) {
+      e.preventDefault();
+      const input = self.el("chatInput");
+      const text = input.value.trim();
+      if (!text) return;
+      input.value = "";
+      self.send("text", text);
+    });
+
+    this.poll();
+    this.timer = setInterval(function () { self.poll(); }, 3000);
+  },
+
+  toggle: function () {
+    this.open = !this.open;
+    this.el("chatBody").classList.toggle("hidden", !this.open);
+    this.el("chatToggle").setAttribute("aria-expanded", String(this.open));
+    if (this.open) {
+      this.unread = 0;
+      this.el("chatBadge").classList.add("hidden");
+      this.scrollToEnd();
+    }
+  },
+
+  poll: async function () {
+    if (!room || !room.code) return;
+    const data = await Sync.fetchMessages(room.code, this.lastId);
+    if (!data || !Array.isArray(data.items) || !data.items.length) return;
+    this.append(data.items);
+  },
+
+  append: function (items) {
+    const log = this.el("chatLog");
+    const self = this;
+    items.forEach(function (m) {
+      if (m.id <= self.lastId) return;
+      self.lastId = m.id;
+      const me = getMe();
+      const mine = !!(me && me.id === m.playerId);
+      const row = document.createElement("div");
+      row.className = "chat-row" + (mine ? " chat-row--mine" : "") + (m.kind === "stamp" ? " chat-row--stamp" : "");
+      row.innerHTML =
+        '<span class="chat-name">' + escapeHtml(m.name || "?") + "</span>" +
+        '<span class="chat-text">' + escapeHtml(m.body || "") + "</span>";
+      log.appendChild(row);
+      if (!self.open) self.unread += 1;
+    });
+    if (!this.open && this.unread > 0) {
+      const badge = this.el("chatBadge");
+      badge.textContent = this.unread > 99 ? "99+" : String(this.unread);
+      badge.classList.remove("hidden");
+    }
+    this.scrollToEnd();
+  },
+
+  scrollToEnd: function () {
+    const log = this.el("chatLog");
+    if (log) log.scrollTop = log.scrollHeight;
+  },
+
+  send: async function (kind, body) {
+    if (this.sending || !room || !room.code) return;
+    this.sending = true;
+    try {
+      await Sync.sendMessage(room.code, kind, body);
+      await this.poll();
+    } catch (e) {
+      showToast(e && e.message ? e.message : "送信できませんでした");
+    } finally {
+      this.sending = false;
+    }
+  }
+};
+
 window.addEventListener("beforeunload", function () {
   Sync.unsubscribe();
   if (pollTimer) clearInterval(pollTimer);
+  if (Chat.timer) clearInterval(Chat.timer);
 });

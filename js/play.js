@@ -640,12 +640,7 @@ function updateRemoteStepNotes(mode) {
     return;
   }
 
-  if (!isFirebaseConfigured()) {
-    noteEl.classList.remove("hidden");
-    noteEl.textContent = "Firebase が未設定です。js/firebase-config.js を編集してください（README 参照）。";
-    return;
-  }
-
+  // オンラインはルームAPI(HTTP)で動く。Firebase は使っていない
   noteEl.classList.remove("hidden");
   noteEl.textContent = "離れた場所にいるメンバーとも、ルームコードで参加できます。";
 }

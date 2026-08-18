@@ -61,7 +61,6 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 3,
-    modesSoon: ["online"],
     module: "WerewolfGame"
   },
   drawing_werewolf: {
@@ -76,7 +75,6 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 4,
-    modesSoon: ["online"],
     module: "DrawingWerewolfGame"
   },
   /* --- 協力・ワード（対応済み） --- */
@@ -89,7 +87,6 @@ const GAME_REGISTRY = {
     maxPlayers: 8,
     status: "live",
     featured: true,
-    modesSoon: ["online"],
     module: "NgWordGame"
   },
   ito: {
@@ -101,7 +98,6 @@ const GAME_REGISTRY = {
     maxPlayers: 8,
     status: "live",
     playCaution: "バグあるかも",
-    modesSoon: ["online"],
     module: "ItoGame"
   },
 
@@ -117,7 +113,7 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 1,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "DaifugoGame"
   },
   doubt: {
@@ -131,7 +127,6 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 2,
-    modesSoon: ["online"],
     module: "DoubtGame"
   },
   wordwolf: {
@@ -146,7 +141,6 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 4,
-    modesSoon: ["online"],
     module: "WordWolfGame"
   },
   coyote: {
@@ -160,7 +154,6 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 5,
-    modesSoon: ["online"],
     module: "CoyoteGame"
   },
   codenames: {
@@ -174,7 +167,6 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 6,
-    modesSoon: ["online"],
     module: "CodenamesGame"
   },
   skull: {
@@ -188,7 +180,7 @@ const GAME_REGISTRY = {
     featured: true,
     priority: true,
     priorityOrder: 7,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "SkullGame"
   },
   cockroach: {
@@ -235,7 +227,6 @@ const GAME_REGISTRY = {
     maxPlayers: 6,
     status: "live",
     featured: true,
-    modesSoon: ["online"],
     module: "OldMaidGame"
   },
   sevens: {
@@ -247,7 +238,6 @@ const GAME_REGISTRY = {
     maxPlayers: 4,
     status: "live",
     featured: true,
-    modesSoon: ["online"],
     module: "SevensGame"
   },
   memory: {
@@ -277,7 +267,7 @@ const GAME_REGISTRY = {
     maxPlayers: 7,
     status: "live",
     featured: true,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "BlackjackGame"
   },
   ninetyNine: {
@@ -289,7 +279,7 @@ const GAME_REGISTRY = {
     maxPlayers: 6,
     status: "live",
     featured: true,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "NinetyNineGame"
   },
   pageOne: {
@@ -310,7 +300,7 @@ const GAME_REGISTRY = {
     maxPlayers: 9,
     status: "live",
     featured: true,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "TexasHoldemGame"
   },
   seven_stud: {
@@ -322,7 +312,7 @@ const GAME_REGISTRY = {
     maxPlayers: 8,
     status: "live",
     featured: true,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "SevenStudGame"
   },
   five_draw: {
@@ -334,7 +324,7 @@ const GAME_REGISTRY = {
     maxPlayers: 6,
     status: "live",
     featured: true,
-    modesSoon: ["local", "online"],
+    modesSoon: ["local"],
     module: "FiveDrawGame"
   },
   reversi: {
@@ -347,7 +337,6 @@ const GAME_REGISTRY = {
     maxPlayers: 2,
     status: "live",
     featured: true,
-    modesSoon: ["online"],
     module: "ReversiGame"
   },
   gomoku: {
@@ -360,7 +349,6 @@ const GAME_REGISTRY = {
     maxPlayers: 2,
     status: "live",
     featured: true,
-    modesSoon: ["online"],
     module: "GomokuGame"
   },
   shogi: {
@@ -373,7 +361,6 @@ const GAME_REGISTRY = {
     maxPlayers: 2,
     status: "live",
     featured: true,
-    modesSoon: ["online"],
     module: "ShogiGame"
   },
   vanishing_ttt: {
@@ -387,7 +374,6 @@ const GAME_REGISTRY = {
     status: "live",
     featured: true,
     instantLocal: true,
-    modesSoon: ["online"],
     module: "VanishingTttGame"
   },
   tic_tac_toe: {
@@ -401,7 +387,6 @@ const GAME_REGISTRY = {
     status: "live",
     featured: true,
     instantLocal: true,
-    modesSoon: ["online"],
     module: "TicTacToeGame"
   },
   matryoshka_ttt: {
@@ -415,7 +400,6 @@ const GAME_REGISTRY = {
     status: "live",
     featured: true,
     instantLocal: true,
-    modesSoon: ["online"],
     module: "MatryoshkaTttGame"
   },
   chinchiro: {

@@ -37,11 +37,12 @@ const Sync = {
     return !isFirebaseConfigured();
   },
 
+  /** オンラインは当初 Firebase で作る想定だったが、実際にはルームAPI(HTTP)へ
+   *  移行済みで、room と online は同じ経路で動く。Firebase の有無で判定すると
+   *  設定が空のままオンラインだけ永久に塞がるため、API基準で判定する。 */
   canUseMultiDevice: function (mode) {
     const m = mode || this.mode;
-    if (m === "room") return true;
-    if (m === "online") return isFirebaseConfigured();
-    return false;
+    return m === "room" || m === "online";
   },
 
 
@@ -537,6 +538,42 @@ const Sync = {
       headers: { "Content-Type": "application/json" },
 
       body: JSON.stringify(data)
+
+    });
+
+  },
+
+
+
+  /* --- 掲示板 --- */
+
+
+
+  fetchMessages: async function (code, since) {
+
+    try {
+
+      return await this.apiFetch("/room/" + String(code || "").toUpperCase() + "/messages?since=" + (since || 0));
+
+    } catch (e) {
+
+      return null;
+
+    }
+
+  },
+
+
+
+  sendMessage: async function (code, kind, body) {
+
+    return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/messages", {
+
+      method: "POST",
+
+      headers: { "Content-Type": "application/json" },
+
+      body: JSON.stringify({ kind: kind, body: body })
 
     });
 
