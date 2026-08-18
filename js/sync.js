@@ -32,9 +32,7 @@ const Sync = {
 
   shouldUseServerApi: function (mode) {
     const m = mode || this.mode;
-    if (m !== "room" && m !== "online") return false;
-    if (m === "room") return true;
-    return !isFirebaseConfigured();
+    return m === "room" || m === "online";
   },
 
   /** オンラインは当初 Firebase で作る想定だったが、実際にはルームAPI(HTTP)へ
@@ -225,49 +223,12 @@ const Sync = {
 
 
 
-    if (this.shouldUseServerApi()) {
+    // room / online はどちらもルームAPI(HTTP)。Firebase は使わない
+    this.uid = getStablePlayerId();
 
-      this.uid = getStablePlayerId();
+    this.db = null;
 
-      this.db = null;
-
-      this.auth = null;
-
-      return true;
-
-    }
-
-
-
-    if (!isFirebaseConfigured()) {
-
-      throw new Error("Firebase が未設定です。js/firebase-config.js を編集してください。");
-
-    }
-
-
-
-    if (!firebase.apps.length) {
-
-      firebase.initializeApp(FIREBASE_CONFIG);
-
-    }
-
-
-
-    this.db = firebase.database();
-
-    this.auth = firebase.auth();
-
-
-
-    if (!this.auth.currentUser) {
-
-      await this.auth.signInAnonymously();
-
-    }
-
-    this.uid = this.auth.currentUser.uid;
+    this.auth = null;
 
     return true;
 
@@ -538,6 +499,42 @@ const Sync = {
       headers: { "Content-Type": "application/json" },
 
       body: JSON.stringify(data)
+
+    });
+
+  },
+
+
+
+  /* --- 募集中の部屋 --- */
+
+
+
+  fetchOpenRooms: async function () {
+
+    try {
+
+      return await this.apiFetch("/rooms/open");
+
+    } catch (e) {
+
+      return null;
+
+    }
+
+  },
+
+
+
+  kickPlayer: async function (code, playerId) {
+
+    return this.apiFetch("/room/" + String(code || "").toUpperCase() + "/kick", {
+
+      method: "POST",
+
+      headers: { "Content-Type": "application/json" },
+
+      body: JSON.stringify({ playerId: playerId })
 
     });
 

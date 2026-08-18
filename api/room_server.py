@@ -5,6 +5,7 @@ import json
 import os
 import re
 import secrets as token_lib
+import shutil
 import time
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from urllib.parse import urlparse
@@ -24,6 +25,13 @@ PLAYER_RE = re.compile(r"^[a-z0-9]{6,16}$")
 MESSAGE_MAX_CHARS = 200      # 1件の本文の上限
 MESSAGE_KEEP = 200           # 1部屋で保持する件数。超えたら古い順に捨てる
 MESSAGE_MIN_INTERVAL = 0.8   # 同じ人の連投を抑える秒数
+
+# --- 部屋の寿命 -----------------------------------------------------------
+# 以前は掃除処理が無く、作られた部屋がディスクに残り続けていた。
+# 募集一覧に死んだ部屋が並ぶのを防ぐためにも必要。
+ROOM_STALE_SECONDS = 3 * 60 * 60      # これ以上更新が無い部屋は消す
+ROOM_OPEN_STALE_SECONDS = 10 * 60     # 募集一覧に載せる上限（体感の鮮度）
+ROOM_SWEEP_INTERVAL = 10 * 60         # 掃除を走らせる間隔
 # スタンプは種類IDだけを送らせる。任意の文字列を許すと本文の抜け道になるため、
 # サーバー側のこの一覧が正。js/room.js の ROOM_STAMPS と同じ並びにすること。
 ALLOWED_STAMPS = [
@@ -48,7 +56,16 @@ GAME_MAX_PLAYERS = {
     "blackjack": 7,
     "ninetyNine": 6,
     "texas_holdem": 9,
+    "doubt": 4,
+    "coyote": 6,
+    "codenames": 8,
+    "oldmaid": 6,
+    "sevens": 4,
+    "seven_stud": 8,
+    "five_draw": 6,
 }
+# 注意: js/game-registry.js の maxPlayers と対応させること。ここに無いゲームは
+# 既定の16人になり、定員を超えて参加できてしまう（募集一覧の表示も 16 になる）。
 
 
 def room_max_players(public):
@@ -141,10 +158,19 @@ def room_path(code):
 
 
 def read_json(path):
+    """壊れたファイルは「無い」として扱う。
+
+    1つの部屋の public.json が壊れただけで例外を上げると、全部屋を走査する
+    募集一覧や掃除処理がまとめて落ちてしまう。BOM 付きも読めるようにしておく
+    （Windows のエディタで触ると付くことがある）。
+    """
     if not os.path.isfile(path):
         return None
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    try:
+        with open(path, "r", encoding="utf-8-sig") as fh:
+            return json.load(fh)
+    except (json.JSONDecodeError, OSError, UnicodeDecodeError):
+        return None
 
 
 def write_json(path, data):
@@ -255,10 +281,17 @@ def increment_play_count():
     return stats["playCount"]
 
 
-def merge_players(old_players, new_players):
-    """Keep everyone who already joined; host saves can lag behind the server."""
+def merge_players(old_players, new_players, kicked=None):
+    """Keep everyone who already joined; host saves can lag behind the server.
+
+    追い出した相手だけは戻さない。ホストの保存は古い参加者一覧を送ってくるため、
+    素直に合成するとキックが取り消されてしまう。
+    """
+    kicked = set(kicked or [])
     old_players = old_players if isinstance(old_players, list) else []
     new_players = new_players if isinstance(new_players, list) else []
+    old_players = [p for p in old_players if not (isinstance(p, dict) and p.get("id") in kicked)]
+    new_players = [p for p in new_players if not (isinstance(p, dict) and p.get("id") in kicked)]
     by_id = {}
     for p in old_players:
         if isinstance(p, dict) and p.get("id"):
@@ -277,6 +310,93 @@ def merge_players(old_players, new_players):
         ordered.append(by_id[pid])
         seen.add(pid)
     return ordered
+
+
+def room_updated_at(public):
+    try:
+        return float(public.get("updatedAt") or 0) / 1000.0
+    except (TypeError, ValueError):
+        return 0.0
+
+
+_last_sweep = [0.0]
+
+
+def sweep_stale_rooms(force=False):
+    """更新が止まった部屋を消す。GET のついでに間引いて呼ぶ。"""
+    now = time.time()
+    if not force and now - _last_sweep[0] < ROOM_SWEEP_INTERVAL:
+        return 0
+    _last_sweep[0] = now
+
+    removed = 0
+    try:
+        codes = os.listdir(ROOM_DIR)
+    except OSError:
+        return 0
+
+    for code in codes:
+        target = os.path.join(ROOM_DIR, code)
+        if not os.path.isdir(target):
+            continue
+        public = read_json(os.path.join(target, "public.json"))
+        if not public:
+            # public.json が無い壊れた部屋。作りかけのまま放置されたもの
+            updated = 0.0
+            try:
+                updated = os.path.getmtime(target)
+            except OSError:
+                pass
+        else:
+            updated = room_updated_at(public)
+        if updated and now - updated < ROOM_STALE_SECONDS:
+            continue
+        try:
+            shutil.rmtree(target)
+            removed += 1
+        except OSError:
+            continue
+    return removed
+
+
+def list_open_rooms():
+    """募集中の部屋。公開設定・ロビー・空きあり・最近更新、を満たすものだけ。"""
+    now = time.time()
+    rooms = []
+    try:
+        codes = os.listdir(ROOM_DIR)
+    except OSError:
+        return rooms
+
+    for code in codes:
+        if not CODE_RE.match(code):
+            continue
+        public = read_json(os.path.join(ROOM_DIR, code, "public.json"))
+        if not isinstance(public, dict):
+            continue
+        if not public.get("isOpen"):
+            continue
+        if (public.get("phase") or "lobby") != "lobby":
+            continue
+        updated = room_updated_at(public)
+        if not updated or now - updated > ROOM_OPEN_STALE_SECONDS:
+            continue
+        players = public.get("players") or []
+        capacity = room_max_players(public)
+        if len(players) >= capacity:
+            continue
+        # 参加者の名前は返さない。募集判断に要らない情報は出さない
+        rooms.append({
+            "code": code,
+            "game": public.get("pendingGame") or public.get("game"),
+            "mode": public.get("mode") or "online",
+            "players": len(players),
+            "capacity": capacity,
+            "updatedAt": int(updated * 1000),
+        })
+
+    rooms.sort(key=lambda r: r["updatedAt"], reverse=True)
+    return rooms
 
 
 def messages_path(code):
@@ -405,6 +525,10 @@ class RoomHandler(BaseHTTPRequestHandler):
                 return json_response(self, 404, {"error": "not found"})
             return json_response(self, 200, data)
 
+        if len(parts) == 2 and parts[0] == "rooms" and parts[1] == "open":
+            sweep_stale_rooms()
+            return json_response(self, 200, {"rooms": list_open_rooms()})
+
         if len(parts) == 3 and parts[0] == "room" and parts[2] == "messages":
             code = parts[1].upper()
             if not CODE_RE.match(code):
@@ -464,9 +588,13 @@ class RoomHandler(BaseHTTPRequestHandler):
                 public["gameStartedAt"] = int(time.time() * 1000)
             elif isinstance(old_public, dict) and old_public.get("gameStartedAt"):
                 public["gameStartedAt"] = old_public["gameStartedAt"]
+            kicked = old_public.get("kicked") if isinstance(old_public, dict) else []
+            kicked = kicked if isinstance(kicked, list) else []
+            if kicked:
+                public["kicked"] = kicked
             if isinstance(public.get("players"), list):
                 old_players = old_public.get("players") if isinstance(old_public, dict) else []
-                public["players"] = merge_players(old_players, public["players"])
+                public["players"] = merge_players(old_players, public["players"], kicked)
             public["updatedAt"] = int(time.time() * 1000)
             write_json(public_path, public)
             if "hostSecrets" in body and body["hostSecrets"] is not None:
@@ -554,6 +682,8 @@ class RoomHandler(BaseHTTPRequestHandler):
             name = (body.get("name") or "").strip()
             if not PLAYER_RE.match(player_id) or not name:
                 return json_response(self, 400, {"error": "invalid player"})
+            if player_id in (public.get("kicked") or []):
+                return json_response(self, 403, {"error": "kicked"})
             players = public.get("players") or []
             if not any(p.get("id") == player_id for p in players):
                 max_players = room_max_players(public)
@@ -567,6 +697,42 @@ class RoomHandler(BaseHTTPRequestHandler):
             response = dict(public)
             response["_token"] = issue_token(code, player_id)
             return json_response(self, 200, response)
+
+        if len(parts) == 3 and parts[0] == "room" and parts[2] == "kick":
+            code = parts[1].upper()
+            if not CODE_RE.match(code):
+                return json_response(self, 400, {"error": "invalid code"})
+            if not may_act_as_host(code, self):
+                return json_response(self, 403, {"error": "forbidden"})
+            target = body.get("playerId", "")
+            if not PLAYER_RE.match(str(target or "")):
+                return json_response(self, 400, {"error": "invalid player"})
+
+            public_path = os.path.join(room_path(code), "public.json")
+            public = read_json(public_path)
+            if not public:
+                return json_response(self, 404, {"error": "not found"})
+            tokens = read_tokens(code) or {"hostId": None, "players": {}}
+            if target == tokens.get("hostId"):
+                return json_response(self, 400, {"error": "cannot kick host"})
+
+            public["players"] = [
+                p for p in (public.get("players") or [])
+                if not (isinstance(p, dict) and p.get("id") == target)
+            ]
+            kicked = public.get("kicked")
+            public["kicked"] = (kicked if isinstance(kicked, list) else []) + [target]
+            public["updatedAt"] = int(time.time() * 1000)
+            write_json(public_path, public)
+
+            # 追い出した相手のトークンと秘密を無効化する。残すと復帰できてしまう
+            tokens["players"].pop(target, None)
+            write_json(tokens_path(code), tokens)
+            try:
+                os.remove(os.path.join(room_path(code), "private", target + ".json"))
+            except OSError:
+                pass
+            return json_response(self, 200, {"ok": True})
 
         if len(parts) == 3 and parts[0] == "room" and parts[2] == "resolve-player":
             code = parts[1].upper()

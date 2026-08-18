@@ -26,8 +26,8 @@ const joinPlayerNameInputOnline = document.getElementById("joinPlayerNameOnline"
 const roomCodeInputRoom = document.getElementById("roomCodeRoom");
 const roomCodeInputOnline = document.getElementById("roomCodeOnline");
 
-const firebaseNoteRoom = document.getElementById("firebaseNoteRoom");
-const firebaseNoteOnline = document.getElementById("firebaseNoteOnline");
+const roomModeHintRoom = document.getElementById("roomModeHintRoom");
+const roomModeHintOnline = document.getElementById("roomModeHintOnline");
 
 const setupRangeHint = document.getElementById("setupRangeHint");
 const setupPlayerCountEl = document.getElementById("setupPlayerCount");
@@ -632,7 +632,7 @@ function collectSetupPlayers() {
 }
 
 function updateRemoteStepNotes(mode) {
-  const noteEl = mode === "room" ? firebaseNoteRoom : firebaseNoteOnline;
+  const noteEl = mode === "room" ? roomModeHintRoom : roomModeHintOnline;
   if (!noteEl) return;
 
   if (mode === "room") {
@@ -779,6 +779,8 @@ async function createRoom(mode, nameInput, btn) {
 
     const code = generateRoomCode();
     const pendingGame = getQueryParam("game") || sessionStorage.getItem("partyGames_pendingGame");
+    // 募集一覧に載せるかどうか。既定は非公開（知らない人を勝手に入れない）
+    const openToggle = document.getElementById("openRoomToggle");
     const room = {
       code: code,
       phase: "lobby",
@@ -786,6 +788,7 @@ async function createRoom(mode, nameInput, btn) {
       gameState: null,
       mode: mode,
       pendingGame: pendingGame || null,
+      isOpen: !!(openToggle && openToggle.checked && mode === "online"),
       _creatorName: name,
       createdAt: Date.now()
     };

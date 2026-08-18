@@ -5167,3 +5167,141 @@ button.cn-cell:hover {
     height: 32vh;
   }
 }
+
+/* --- 募集中の部屋 ------------------------------------------------------- */
+
+.page-title {
+  margin: 1.4rem 0 0.4rem;
+  font-size: 1.6rem;
+}
+
+.page-lead {
+  margin: 0 0 1.2rem;
+  color: var(--text-dim);
+  line-height: 1.7;
+}
+
+.rooms-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  padding: 0.75rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.rooms-bar label {
+  flex: 0 0 auto;
+  color: var(--text-dim);
+  font-size: 0.9rem;
+}
+
+.rooms-bar input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.rooms-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.room-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  padding: 0.8rem 0.9rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--surface);
+}
+
+.room-card-main {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  min-width: 0;
+}
+
+.room-card-game {
+  font-weight: 700;
+}
+
+.room-card-meta {
+  color: var(--text-dim);
+  font-size: 0.85rem;
+}
+
+.room-card-code {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  letter-spacing: 0.12em;
+}
+
+.room-card-join {
+  flex: 0 0 auto;
+}
+
+.room-card-join[disabled] {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.rooms-empty {
+  padding: 1.5rem;
+  border: 1px dashed var(--border);
+  border-radius: var(--radius);
+  color: var(--text-dim);
+  text-align: center;
+  line-height: 1.8;
+}
+
+/* 公開して募集するの切り替え */
+.open-room-toggle {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.55rem;
+  margin-top: 0.85rem;
+  padding: 0.6rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--bg);
+  cursor: pointer;
+}
+
+.open-room-toggle input {
+  flex: 0 0 auto;
+  margin-top: 0.15rem;
+}
+
+.open-room-toggle small {
+  display: block;
+  margin-top: 0.15rem;
+  color: var(--text-dim);
+  font-size: 0.8rem;
+  line-height: 1.6;
+}
+
+/* ホストのキック */
+.kick-btn {
+  margin-left: auto;
+  padding: 0.15rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 0.78rem;
+  cursor: pointer;
+}
+
+.kick-btn:hover {
+  border-color: var(--danger);
+  color: var(--danger);
+}

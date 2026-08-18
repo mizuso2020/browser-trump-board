@@ -1353,7 +1353,14 @@ function renderLobby(ctx) {
 
   html.push('<section class="card"><h2>プレイヤー（' + ctx.room.players.length + '人）</h2><ul class="player-list">');
   ctx.room.players.forEach(function (p) {
-    html.push('<li><span>' + escapeHtml(p.name) + (p.isHost ? ' 👑' : '') + '</span></li>');
+    html.push('<li><span>' + escapeHtml(p.name) + (p.isHost ? ' 👑' : '') + '</span>');
+    // 公開部屋には知らない人も入るため、ホストが外せる手段が必要。
+    // ロビーの間だけ・ホスト以外に対してのみ出す
+    if (ctx.isHost && !p.isHost && ctx.room.mode !== "local" && ctx.room.phase === "lobby") {
+      html.push('<button type="button" class="kick-btn" data-action="kick-player" data-player="' +
+        escapeHtml(p.id) + '" data-name="' + escapeHtml(p.name) + '">追い出す</button>');
+    }
+    html.push('</li>');
   });
   html.push('</ul></section>');
 
@@ -1660,6 +1667,21 @@ function applyPlayerNamesFromInputs() {
 
 async function handleAction(action, data, ctx) {
   switch (action) {
+    case "kick-player": {
+      if (!ctx.isHost) return;
+      const who = data.name || "この人";
+      if (!window.confirm(who + " を部屋から追い出しますか？（同じ端末からは再参加できなくなります）")) return;
+      try {
+        await Sync.kickPlayer(room.code, data.player);
+        await pullRoomFromServer();
+        render();
+        showToast(who + " を追い出しました");
+      } catch (err) {
+        showToast(err && err.message ? err.message : "追い出せませんでした");
+      }
+      return;
+    }
+
     case "start-game":
       if (!ctx.isHost) return;
       const startMeta = GameRegistry.get(data.game);

@@ -6,7 +6,7 @@
   <meta name="robots" content="noindex">
   <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
   <title>遊び方を選ぶ | ブラウザ・トランプ＆ボード</title>
-  <link rel="stylesheet" href="css/style.css?v=20260818-chat">
+  <link rel="stylesheet" href="css/style.css?v=20260819-rooms">
 </head>
 <body>
 
@@ -18,6 +18,7 @@
       <nav class="site-nav">
         <a href="index.html">トップ</a>
         <a href="categories.html">カテゴリ</a>
+        <a href="rooms.html">募集中の部屋</a>
         <span class="site-nav-stat">
           <a href="guide.html">遊び方</a>
           <span id="sitePlayCount" class="site-play-count" aria-label="累計プレイ回数">…</span>
@@ -90,7 +91,7 @@
         <section class="room-panel play-step-panel" id="roomCreatePanel">
           <h3 class="setup-title">ルームを作る</h3>
           <p class="note" id="roomModeNote">ルームを作り、コードを共有してください。参加者は各自のスマホから参加します。</p>
-          <p class="note hidden" id="firebaseNoteRoom">Firebase の設定が必要です（README 参照）。</p>
+          <p class="note hidden" id="roomModeHintRoom"></p>
           <div id="drawingWerewolfPlaySetupRoom" class="wordwolf-play-setup hidden"></div>
           <div id="onlineCreateNameRoom">
             <label for="playerName">あなたの名前</label>
@@ -119,11 +120,18 @@
         </div>
         <section class="room-panel play-step-panel">
           <h3 class="setup-title">ルームを作る</h3>
-          <p class="note" id="firebaseNoteOnline">Firebase の設定が必要です（README 参照）。</p>
+          <p class="note" id="roomModeHintOnline">離れた場所にいるメンバーとも、ルームコードで参加できます。</p>
           <div id="onlineCreateNameOnline">
             <label for="playerNameOnline">あなたの名前</label>
             <input type="text" id="playerNameOnline" placeholder="プレイヤー1" maxlength="12" autocomplete="nickname">
           </div>
+          <label class="open-room-toggle">
+            <input type="checkbox" id="openRoomToggle">
+            <span>
+              <strong>公開して募集する</strong>
+              <small>「募集中の部屋」に載り、知らない人も参加できます。外すとコードを知っている人だけ入れます。</small>
+            </span>
+          </label>
           <button class="btn btn-primary" id="createRoomBtnOnline" style="width:100%;margin-top:0.75rem">ルームを作る</button>
         </section>
         <section class="join-panel play-step-panel">
@@ -143,7 +151,6 @@
     <p>ブラウザ・トランプ＆ボード</p>
   </footer>
 
-  <script src="js/firebase-config.js"></script>
   <script src="js/ensure-utils.js?v=20260713-revert3"></script>
   <script src="js/stats-boot.js"></script>
   <script src="js/stats.js"></script>
@@ -155,7 +162,7 @@
   <script src="js/ito-play-setup-boot.js?v=20260712-ito8"></script>
   <script src="js/room-store.js"></script>
   <script src="js/secrets.js"></script>
-  <script src="js/sync.js?v=20260818-chat"></script>
-  <script src="js/play.js?v=20260818-online"></script>
+  <script src="js/sync.js?v=20260819-rooms2"></script>
+  <script src="js/play.js?v=20260819-rooms2"></script>
 </body>
 </html>
